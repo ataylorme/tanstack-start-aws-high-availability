@@ -1,0 +1,43 @@
+{
+  "site": "https://d20xnhi2h10j2b.cloudfront.net",
+  "testedAt": "2026-09-26T22:16:09.522Z",
+  "outcomes": [
+    {
+      "pausedRegion": "us-east-1",
+      "runId": "test-recovery-0cb9b12a-3844-4be0-b67c-4f29b9e782a4",
+      "output": {
+        "started": {
+          "region": "us-east-1",
+          "release": "ee9fbc6-1790459916687"
+        },
+        "finished": {
+          "region": "us-west-2",
+          "release": "development"
+        },
+        "firstWake": {
+          "region": "us-west-2",
+          "release": "development"
+        }
+      }
+    },
+    {
+      "pausedRegion": "us-west-2",
+      "runId": "test-recovery-f2e20762-9400-4c96-83fe-d0d657e5826e",
+      "output": {
+        "started": {
+          "region": "us-west-2",
+          "release": "ee9fbc6-1790459916687"
+        },
+        "finished": {
+          "region": "us-east-1",
+          "release": "development"
+        },
+        "firstWake": {
+          "region": "us-east-1",
+          "release": "development"
+        }
+      }
+    }
+  ],
+  "bothSchedulesRestored": true
+}

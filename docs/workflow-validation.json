@@ -1,0 +1,104 @@
+{
+  "site": "https://d20xnhi2h10j2b.cloudfront.net",
+  "testedAt": "2026-09-26T22:14:48.218Z",
+  "upstreamCommit": "f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c",
+  "attemptedRuns": [
+    {
+      "scenario": "cross-region us-east-1",
+      "runId": "test-c45fe1fc-ea1d-4d8c-82e7-f5a00b179ea5"
+    },
+    {
+      "scenario": "cross-region us-west-2",
+      "runId": "test-5b666b16-58c7-49af-96cf-105a3369edf9"
+    },
+    {
+      "scenario": "concurrent duplicate start/signal and rejection",
+      "runId": "test-08b670aa-cb6c-41be-bd0d-93b4d6cec397"
+    }
+  ],
+  "results": [
+    {
+      "scenario": "authentication",
+      "ok": true,
+      "detail": "Public workflow API refuses unauthenticated requests"
+    },
+    {
+      "scenario": "cross-region us-east-1",
+      "ok": true,
+      "detail": {
+        "runId": "test-c45fe1fc-ea1d-4d8c-82e7-f5a00b179ea5",
+        "output": {
+          "approved": true,
+          "signaled": {
+            "region": "us-west-2",
+            "release": "ee9fbc6-1790459916687"
+          },
+          "started": {
+            "region": "us-east-1",
+            "release": "ee9fbc6-1790459916687"
+          },
+          "finished": {
+            "region": "us-west-2",
+            "release": "development"
+          },
+          "firstWake": {
+            "region": "us-west-2",
+            "release": "development"
+          },
+          "signal": {
+            "message": "us-east-1"
+          },
+          "retry": {
+            "region": "us-east-1",
+            "attempt": 2,
+            "release": "ee9fbc6-1790459916687"
+          }
+        },
+        "eventCount": 14
+      }
+    },
+    {
+      "scenario": "cross-region us-west-2",
+      "ok": true,
+      "detail": {
+        "runId": "test-5b666b16-58c7-49af-96cf-105a3369edf9",
+        "output": {
+          "approved": true,
+          "signaled": {
+            "region": "us-east-1",
+            "release": "ee9fbc6-1790459916687"
+          },
+          "started": {
+            "region": "us-west-2",
+            "release": "ee9fbc6-1790459916687"
+          },
+          "finished": {
+            "region": "us-west-2",
+            "release": "development"
+          },
+          "firstWake": {
+            "region": "us-west-2",
+            "release": "development"
+          },
+          "signal": {
+            "message": "us-west-2"
+          },
+          "retry": {
+            "region": "us-west-2",
+            "attempt": 2,
+            "release": "ee9fbc6-1790459916687"
+          }
+        },
+        "eventCount": 14
+      }
+    },
+    {
+      "scenario": "concurrent duplicate start/signal and rejection",
+      "ok": true,
+      "detail": {
+        "runId": "test-08b670aa-cb6c-41be-bd0d-93b4d6cec397",
+        "eventCount": 8
+      }
+    }
+  ]
+}
