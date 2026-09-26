@@ -1,7 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Regional ECR and east-region Lambda@Edge artifact storage
-Conditions:
-  IsEast: !Equals [!Ref 'AWS::Region', us-east-1]
+Description: Regional ECR and private Lambda deployment artifact storage
 Resources:
   Repository:
     Type: AWS::ECR::Repository
@@ -15,7 +13,6 @@ Resources:
         EncryptionType: AES256
   Artifacts:
     Type: AWS::S3::Bucket
-    Condition: IsEast
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -35,7 +32,6 @@ Resources:
               SSEAlgorithm: AES256
   ArtifactsPolicy:
     Type: AWS::S3::BucketPolicy
-    Condition: IsEast
     Properties:
       Bucket: !Ref Artifacts
       PolicyDocument:
@@ -56,5 +52,4 @@ Outputs:
   RepositoryName:
     Value: !Ref Repository
   ArtifactBucket:
-    Condition: IsEast
     Value: !Ref Artifacts

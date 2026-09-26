@@ -13,11 +13,23 @@ Parameters:
     AllowedPattern: '[a-f0-9]+'
   ReleaseId:
     Type: String
+  WorkflowTableName:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|[a-zA-Z0-9_.-]{3,255}'
+    Description: Optional region-local replica of the shared workflow table
+  WorkflowTestToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Authentication token for the optional workflow validation endpoints
   SimulateFailure:
     Type: String
     Default: 'false'
     AllowedValues: ['true', 'false']
     Description: Demo-only failure drill; dynamic requests return 503, readiness stays healthy
+Conditions:
+  HasWorkflowTable: !Not [!Equals [!Ref WorkflowTableName, '']]
 Resources:
   ExecutionRole:
     Type: AWS::IAM::Role
@@ -37,6 +49,24 @@ Resources:
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub '${LogGroup.Arn}'
+        - !If
+          - HasWorkflowTable
+          - PolicyName: WorkflowStore
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:DeleteItem
+                    - dynamodb:Query
+                    - dynamodb:Scan
+                  Resource:
+                    - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${WorkflowTableName}'
+                    - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${WorkflowTableName}/index/DueIndex'
+          - !Ref AWS::NoValue
   LogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
@@ -66,6 +96,8 @@ Resources:
           ORIGIN_SECRET: !Ref OriginSecret
           RELEASE_ID: !Ref ReleaseId
           SIMULATE_FAILURE: !Ref SimulateFailure
+          TABLE_NAME: !If [HasWorkflowTable, !Ref WorkflowTableName, !Ref AWS::NoValue]
+          WORKFLOW_TEST_TOKEN: !If [HasWorkflowTable, !Ref WorkflowTestToken, !Ref AWS::NoValue]
   FunctionUrl:
     Type: AWS::Lambda::Url
     Properties:

@@ -1,3 +1,4 @@
+import { publishImage } from './publish-image.ts'
 import { viewerCode } from './viewer-code.ts'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
@@ -7,6 +8,14 @@ import { resolve } from 'node:path'
 const regions = ['us-east-1', 'us-west-2'] as const
 const prefix = process.env.STACK_PREFIX ?? 'tanstack-ha'
 if (!/^[a-z][a-z0-9-]{0,39}$/.test(prefix)) throw new Error('Invalid STACK_PREFIX (lowercase, max 40 characters)')
+const workflowMode = process.env.ENABLE_WORKFLOW_TESTS ?? 'false'
+if (!['true', 'false'].includes(workflowMode)) throw new Error('Invalid ENABLE_WORKFLOW_TESTS')
+const workflow = workflowMode === 'true'
+if (workflow && (!process.env.STACK_PREFIX || prefix === 'tanstack-ha')) {
+  throw new Error('Workflow tests require an explicit isolated STACK_PREFIX other than tanstack-ha')
+}
+const uploadMode = process.env.ECR_UPLOAD_MODE ?? 'docker'
+if (!['docker', 'api'].includes(uploadMode)) throw new Error('Invalid ECR_UPLOAD_MODE (docker or api)')
 if (!process.argv.includes('--execute')) {
   console.log(`Deployment plan for ${prefix} (no AWS calls made):
 1. Validate locally; create CloudFormation bootstrap stacks in both regions.
@@ -17,7 +26,9 @@ if (!process.argv.includes('--execute')) {
 
 Run node scripts/deploy.ts --execute to create/update billable AWS resources.
 Requires Node 24+, AWS CLI v2 credentials, Docker buildx, zip, and npm ci.
-No resources are deleted by this script.`)
+No resources are deleted by this script.
+${workflow ? 'Workflow tests enabled: deploy one MRSC table with east/west replicas and an Ohio witness, plus native sweepers in both regions.' : 'Workflow tests disabled.'}
+ECR upload mode: ${uploadMode}.`)
   process.exit(0)
 }
 
@@ -65,6 +76,26 @@ chmodSync(secretFile, 0o600)
 const secret = readFileSync(secretFile, 'utf8').trim()
 if (!/^[a-f0-9]{64}$/.test(secret)) throw new Error('Origin secret must be 64 lowercase hex characters')
 
+let workflowToken = ''
+const workflowTable = `${prefix}-workflow`
+if (workflow) {
+  const tokenFile = resolve(work, 'workflow-test-token')
+  if (!existsSync(tokenFile)) {
+    for (const region of regions) {
+      const names: unknown = JSON.parse(aws(region, ['cloudformation', 'list-stacks',
+        '--query', "StackSummaries[?StackStatus!='DELETE_COMPLETE'].StackName", '--output', 'json']))
+      if (!Array.isArray(names)) throw new Error('Unexpected stack list')
+      if (names.includes(`${prefix}-app`)) {
+        throw new Error(`Restore ${tokenFile} before updating existing apps; refusing token rotation`)
+      }
+    }
+    writeFileSync(tokenFile, randomBytes(32).toString('hex'), { mode: 0o600 })
+  }
+  chmodSync(tokenFile, 0o600)
+  workflowToken = readFileSync(tokenFile, 'utf8').trim()
+  if (!/^[a-f0-9]{64}$/.test(workflowToken)) throw new Error('Workflow test token must be 64 lowercase hex characters')
+}
+
 function deploy(region: string, stack: string, template: string, parameters: Record<string, string> = {}): void {
   console.log(`Deploying ${stack} in ${region}`)
   const file = resolve(work, `${region}-${stack}-parameters.json`)
@@ -81,29 +112,59 @@ function deploy(region: string, stack: string, template: string, parameters: Rec
 }
 
 for (const region of regions) deploy(region, `${prefix}-bootstrap`, 'infra/bootstrap.yaml')
+if (workflow) {
+  deploy('us-west-2', `${prefix}-workflow-table`, 'infra/workflow-table.yaml', { TableName: workflowTable })
+  for (const region of regions) aws(region, ['dynamodb', 'wait', 'table-exists', '--table-name', workflowTable])
+}
 const release = `${run('git', ['rev-parse', '--short', 'HEAD'])}-${Date.now()}`
 const image = `${prefix}:${release}`
 // Lambda requires a single-architecture manifest, not a provenance/index manifest.
 console.log(run('docker', ['buildx', 'build', '--platform', 'linux/amd64', '--provenance=false',
   '--sbom=false', '--load', '--tag', image, '.']))
+const archive = resolve(work, 'image.tar')
+if (uploadMode === 'api') run('docker', ['save', '--output', archive, image])
+let expectedDigest: string | undefined
 const domains = new Map<string, string>()
 for (const region of regions) {
   const repository = output(region, `${prefix}-bootstrap`, 'RepositoryUri')
   const repositoryName = output(region, `${prefix}-bootstrap`, 'RepositoryName')
   const registry = repository.split('/')[0]
   if (!registry) throw new Error('Invalid repository URI')
-  const password = aws(region, ['ecr', 'get-login-password'])
-  run('docker', ['login', '--username', 'AWS', '--password-stdin', registry], password)
-  run('docker', ['tag', image, `${repository}:${release}`])
-  console.log(run('docker', ['push', `${repository}:${release}`]))
+  const uploadedDigest = uploadMode === 'api'
+    ? publishImage({ archive, work, region, repository: repositoryName, release, aws })
+    : undefined
+  if (uploadMode === 'docker') {
+    const password = aws(region, ['ecr', 'get-login-password'])
+    run('docker', ['login', '--username', 'AWS', '--password-stdin', registry], password)
+    run('docker', ['tag', image, `${repository}:${release}`])
+    console.log(run('docker', ['push', `${repository}:${release}`]))
+  }
   const digest = aws(region, ['ecr', 'describe-images', '--repository-name', repositoryName,
     '--image-ids', `imageTag=${release}`, '--query', 'imageDetails[0].imageDigest', '--output', 'text'])
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid ECR digest')
+  if (uploadedDigest && digest !== uploadedDigest) throw new Error('Published manifest digest mismatch')
+  if (expectedDigest && expectedDigest !== digest) throw new Error('Regional image digests differ')
+  expectedDigest = digest
   deploy(region, `${prefix}-app`, 'infra/regional.yaml', {
     ImageUri: `${repository}@${digest}`, OriginSecret: secret, ReleaseId: release,
     SimulateFailure: 'false',
+    ...(workflow ? { WorkflowTableName: workflowTable, WorkflowTestToken: workflowToken } : {}),
   })
   domains.set(region, new URL(output(region, `${prefix}-app`, 'FunctionUrl')).hostname)
+}
+if (workflow) {
+  const sweeperZip = resolve(work, 'workflow-sweeper.zip')
+  rmSync(sweeperZip, { force: true })
+  run('zip', ['-j', '-X', sweeperZip, 'dist/sweeper/sweeper.js'])
+  const sweeperHash = createHash('sha256').update(readFileSync(sweeperZip)).digest('hex')
+  const sweeperKey = `workflow-sweeper/${sweeperHash}.zip`
+  for (const region of regions) {
+    const localBucket = output(region, `${prefix}-bootstrap`, 'ArtifactBucket')
+    aws(region, ['s3', 'cp', sweeperZip, `s3://${localBucket}/${sweeperKey}`])
+    deploy(region, `${prefix}-sweeper`, 'infra/workflow-sweeper.yaml', {
+      TableName: workflowTable, CodeBucket: localBucket, CodeKey: sweeperKey,
+    })
+  }
 }
 const eastDomain = domains.get('us-east-1')
 const westDomain = domains.get('us-west-2')

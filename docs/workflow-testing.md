@@ -1,0 +1,124 @@
+# Workflow integration test branch
+
+This branch tests **`@ataylorme/tanstack-workflow-aws` 0.1.0**, pinned to upstream
+[`f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c`](https://github.com/ataylorme/tanstack-workflow-aws/tree/f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c).
+It imports the store and its matching bundled workflow/runtime snapshot—not an
+independently versioned TanStack Workflow engine. Upstream is experimental.
+The infrastructure is adapted from its MIT-licensed examples; see
+[`third-party/tanstack-workflow-aws-LICENSE`](../third-party/tanstack-workflow-aws-LICENSE).
+
+## Isolated architecture
+
+```mermaid
+flowchart TB
+    browser["Token-protected workflow lab"] --> cf["Separate CloudFront + Lambda@Edge"]
+    cf --> east["Start / Web Adapter<br/>us-east-1"]
+    cf --> west["Start / Web Adapter<br/>us-west-2"]
+    east --> eastDB["MRSC replica<br/>us-east-1"]
+    west --> westDB["MRSC replica<br/>us-west-2"]
+    eastDB <--> westDB
+    witness["MRSC witness<br/>us-east-2"] --- eastDB
+    witness --- westDB
+    eastEvents["EventBridge: every minute"] --> eastSweep["Private native sweep Lambda"] --> eastDB
+    westEvents["EventBridge: every minute"] --> westSweep["Private native sweep Lambda"] --> westDB
+```
+
+The default test prefix is `tanstack-wf-test`. It creates **eight stacks**: bootstrap,
+app and sweeper in each application region, global ingress in east, and one global-table
+stack in west. The table creates both replicas and the Ohio witness. Existing
+`tanstack-ha` resources are not changed. Ordinary MREC tables cannot safely replace MRSC.
+No Aurora DSQL, business database, email, payment, or other external side effect is added.
+
+Every runtime call uses a fresh owner in both `withLeaseOwner` and `leaseOwner`.
+HTTP execution is bounded to five seconds, sweeps to Lambda's remaining time minus two
+seconds. The two definitions are shared by the web app and native sweepers:
+
+- `validation-v1`: durable region-recording step; deliberate first-attempt failure and
+  retry; signal; approval (including rejection); two durable sleeps; final region.
+- `timer-v1`: two sleeps and region-recording steps, useful for isolated sweeper recovery.
+
+## Deploy
+
+This creates billable resources including a three-region DynamoDB MRSC topology.
+Use a sandbox and keep workload small. Do not use the existing main site's prefix.
+
+```sh
+npm ci
+npm run check
+npm run smoke
+export AWS_PROFILE=ataylorme
+aws sts get-caller-identity  # verify the intended account, not root
+export STACK_PREFIX=tanstack-wf-test
+export ENABLE_WORKFLOW_TESTS=true
+# Optional: host ECR multipart uploads when Docker Desktop's proxy breaks docker push.
+export ECR_UPLOAD_MODE=api
+node scripts/deploy.ts             # offline plan
+node scripts/deploy.ts --execute   # create/update resources and verify HTTP routing
+```
+
+The dependency is installed from a pinned public HTTPS Git reference. The Docker build
+stage includes Git/CA certificates for npm's prepare build; neither is added to the final
+runtime image. The lockfile fixes transitive dependencies. The `api` ECR mode requires
+`tar`, validates OCI blob hashes and sizes, and uploads the same saved image to both regions.
+Do not rebuild an independent image per region.
+
+`origin-secret` and a **separate workflow API token** are saved with owner-only permissions
+under `.deploy/<account>-<prefix>/`. Preserve both for updates. Missing keys on an existing
+deployment are not silently rotated. Never commit or publish these files.
+
+## Use and validate
+
+Get `SiteUrl` from the test global stack. The main page contains a workflow lab. Enter the
+workflow test token from the protected local `workflow-test-token` file; it stays only in
+component memory. It is not in URLs, localStorage, Git, or public frontend assets. Use the
+request-region selector to start east, signal west, inspect the approval ID, approve east,
+then inspect after the scheduled sweepers finish. Use **New run** between definitions.
+A full page reload clears the token and run ID; retain the run ID if you want to inspect later.
+
+API calls to `/api/workflows` require `Authorization: Bearer <test-token>` in addition to
+the CloudFront origin guard. Only bounded IDs beginning `test-`, two known definitions,
+small test messages, and signal/approval commands are accepted. There is no public sweep,
+scan, delete, or arbitrary workflow execution API. This is a shared sandbox token—not
+production user/tenant authorization or rate limiting.
+
+```sh
+export SITE_URL="$(aws cloudformation describe-stacks --region us-east-1 \
+  --stack-name "$STACK_PREFIX-global" \
+  --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue | [0]" --output text)"
+export WORKFLOW_TEST_TOKEN_FILE="$PWD/.deploy/963564733329-$STACK_PREFIX/workflow-test-token"
+node scripts/verify-workflows.ts "$SITE_URL" --execute
+```
+
+The bounded acceptance runner checks auth, strongly consistent cross-region inspection,
+start/signal/approval in both directions, duplicate and concurrent requests, approval
+rejection, retry results, contiguous committed event indices, and **actual EventBridge**
+completion of consecutive timers. It allows four minutes for eventual GSI discovery and
+minute-based schedules, records run IDs/results under `.deploy`, and exits nonzero on any
+failure. Local Vitest runtime tests use the installed engine with its in-memory store;
+those do **not** establish DynamoDB/MRSC correctness.
+
+For native sweeper diagnostics inspect its dedicated log group; successful Lambda invocation
+alone is insufficient. The wrapper logs summaries and deferred `RUN_ERRORED` diagnostics.
+The test data and history are deliberately retained for diagnosis. Do not submit secrets or
+personal information as workflow payloads.
+
+## Validation evidence and issue reporting
+
+Live outcomes are recorded in [workflow-validation.md](workflow-validation.md). File
+confirmed, minimized library defects in the upstream repository with its pinned SHA,
+region topology, reproduction, expected/actual outcome, and sanitized evidence. Do not
+publish tokens, origin credentials, AWS credentials, or raw environment/configuration dumps.
+Application wiring mistakes are fixed here, not reported as upstream defects.
+
+Passing this lab does not validate quorum loss, real AWS regional outages, load/throughput,
+400 KB limits, every crash boundary, arbitrary external side-effect idempotency, or a DSQL
+outbox. Preserve compatible workflow versions for in-flight runs during updates.
+
+## Cleanup
+
+Stop both test schedules before teardown, then delete the test global stack, both sweeper
+stacks, both app stacks, and both bootstrap stacks. Delete the west workflow-table stack
+last. Use only the **test** prefix. These are destructive actions; the deployment script
+never performs them. Retained ECR/S3/logs/edge resources and the MRSC table require explicit
+cleanup after recording any evidence. A deleted table stack does not delete the retained
+table or stop its storage charges. The main `tanstack-ha` deployment is separate.

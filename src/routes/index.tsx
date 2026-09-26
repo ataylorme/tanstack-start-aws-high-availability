@@ -1,6 +1,7 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
+import { WorkflowLab } from '../components/WorkflowLab'
 import { regionInfo } from '../lib/origin'
 
 const getRegion = createServerFn({ method: 'GET' }).handler(() => regionInfo(process.env))
@@ -48,5 +49,6 @@ function Home() {
       <p role="status">{writeResult}</p>
       <a href="/healthz">Inspect this origin’s health response →</a>
     </section>
+    <WorkflowLab />
   </main>
 }

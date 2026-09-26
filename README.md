@@ -8,6 +8,12 @@ Infrastructure is plain **CloudFormation**, not CDK, SAM, or Terraform.
 > AWS active/active routing and both-direction HTTP failover were verified on 2026-09-26.
 > Re-run verification for your deployment. CloudFront **does not automatically retry writes**.
 
+## Workflow testing branch
+
+This branch adds an isolated, token-protected TanStack Workflow AWS integration lab.
+See [deployment and testing](docs/workflow-testing.md) and [validation evidence](docs/workflow-validation.md).
+Use `ENABLE_WORKFLOW_TESTS=true` with a separate stack prefix; do not overwrite the main site.
+
 ## Start here
 
 - **[Use the repository](docs/getting-started.md)** — clone, run locally, test, build the
