@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFront active-active routing and versioned Lambda@Edge (us-east-1 only)
+Parameters:
+  EastDomain:
+    Type: String
+    AllowedPattern: '[a-z0-9]+\.lambda-url\.us-east-1\.on\.aws'
+  WestDomain:
+    Type: String
+    AllowedPattern: '[a-z0-9]+\.lambda-url\.us-west-2\.on\.aws'
+  OriginSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 64
+    MaxLength: 128
+    AllowedPattern: '[a-f0-9]+'
+  ArtifactBucket:
+    Type: String
+  EdgeCodeKey:
+    Type: String
+    Description: Immutable content-addressed ZIP key
+  EdgeCodeSha256:
+    Type: String
+    Description: Base64 SHA256 of the ZIP, forces a new numbered version on change
+Resources:
+  EdgeRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com, edgelambda.amazonaws.com]
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EdgeLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:*:${AWS::AccountId}:*'
+  EdgeRouter:
+    Type: AWS::Lambda::Function
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Role: !GetAtt EdgeRole.Arn
+      Architectures: [x86_64]
+      MemorySize: 128
+      Timeout: 5
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref EdgeCodeKey
+  EdgeVersion:
+    Type: AWS::Lambda::Version
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      FunctionName: !Ref EdgeRouter
+      CodeSha256: !Ref EdgeCodeSha256
+  ForwardViewer:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub '${AWS::StackName}-viewer'
+        CookiesConfig:
+          CookieBehavior: all
+        QueryStringsConfig:
+          QueryStringBehavior: all
+        HeadersConfig:
+          HeaderBehavior: allExcept
+          Headers: [host]
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: TanStack Start dual-region active-active example
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: primary-slot
+            DomainName: !Ref EastDomain
+            ConnectionAttempts: 1
+            ConnectionTimeout: 3
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+              OriginReadTimeout: 15
+              OriginKeepaliveTimeout: 5
+            OriginCustomHeaders:
+              - HeaderName: x-origin-slot
+                HeaderValue: primary
+              - HeaderName: x-origin-verify
+                HeaderValue: !Ref OriginSecret
+          - Id: secondary-slot
+            DomainName: !Ref WestDomain
+            ConnectionAttempts: 1
+            ConnectionTimeout: 3
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+              OriginReadTimeout: 15
+              OriginKeepaliveTimeout: 5
+            OriginCustomHeaders:
+              - HeaderName: x-origin-slot
+                HeaderValue: secondary
+              - HeaderName: x-origin-verify
+                HeaderValue: !Ref OriginSecret
+        OriginGroups:
+          Quantity: 1
+          Items:
+            - Id: regional-pair
+              FailoverCriteria:
+                StatusCodes:
+                  Quantity: 6
+                  Items: [429, 500, 502, 503, 504, 404]
+              Members:
+                Quantity: 2
+                Items:
+                  - OriginId: primary-slot
+                  - OriginId: secondary-slot
+        DefaultCacheBehavior:
+          TargetOriginId: regional-pair
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD, OPTIONS]
+          # AWS managed CachingDisabled: SSR, cookies and server functions never cached.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: !Ref ForwardViewer
+          Compress: true
+          LambdaFunctionAssociations:
+            - EventType: viewer-request
+              LambdaFunctionARN: !Ref EdgeVersion
+              IncludeBody: false
+            - EventType: origin-request
+              LambdaFunctionARN: !Ref EdgeVersion
+              IncludeBody: false
+        CustomErrorResponses:
+          - ErrorCode: 500
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 502
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 503
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 504
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ErrorCachingMinTTL: 0
+  ErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Viewer-visible failures after both origins were attempted; add SNS actions for production
+      Namespace: AWS/CloudFront
+      MetricName: 5xxErrorRate
+      Dimensions:
+        - Name: DistributionId
+          Value: !Ref Distribution
+        - Name: Region
+          Value: Global
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+Outputs:
+  DistributionId:
+    Value: !Ref Distribution
+  SiteUrl:
+    Value: !Sub 'https://${Distribution.DomainName}'
+  EdgeFunctionArn:
+    Value: !GetAtt EdgeRouter.Arn
+  EdgeRoleName:
+    Value: !Ref EdgeRole

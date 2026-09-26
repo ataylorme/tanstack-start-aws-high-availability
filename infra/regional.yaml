@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: TanStack Start container Lambda and Function URL (deploy in both regions)
+Parameters:
+  ImageUri:
+    Type: String
+    Description: Region-local ECR image URI pinned to sha256 digest
+    AllowedPattern: '.+\.dkr\.ecr\.(us-east-1|us-west-2)\.amazonaws\.com/.+@sha256:[a-f0-9]{64}'
+  OriginSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 64
+    MaxLength: 128
+    AllowedPattern: '[a-f0-9]+'
+  ReleaseId:
+    Type: String
+  SimulateFailure:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Demo-only failure drill; dynamic requests return 503, readiness stays healthy
+Resources:
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ApplicationLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub '${LogGroup.Arn}'
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RetentionInDays: 14
+  Application:
+    Type: AWS::Lambda::Function
+    Properties:
+      PackageType: Image
+      Architectures: [x86_64]
+      Code:
+        ImageUri: !Ref ImageUri
+      Role: !GetAtt ExecutionRole.Arn
+      MemorySize: 1024
+      Timeout: 30
+      LoggingConfig:
+        LogGroup: !Ref LogGroup
+      Environment:
+        Variables:
+          NODE_ENV: production
+          PORT: '8080'
+          AWS_LWA_PORT: '8080'
+          AWS_LWA_READINESS_CHECK_PATH: /readyz
+          AWS_LWA_READINESS_CHECK_HEALTHY_STATUS: '200'
+          AWS_LWA_INVOKE_MODE: buffered
+          ORIGIN_SECRET: !Ref OriginSecret
+          RELEASE_ID: !Ref ReleaseId
+          SIMULATE_FAILURE: !Ref SimulateFailure
+  FunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt Application.Arn
+      AuthType: NONE
+      InvokeMode: BUFFERED
+  UrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Application
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Application
+      Action: lambda:InvokeFunction
+      Principal: '*'
+      InvokedViaFunctionUrl: true
+  ErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Lambda runtime/adapter errors (HTTP 5xx are monitored at CloudFront)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref Application
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+  ThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref Application
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+Outputs:
+  FunctionUrl:
+    Value: !GetAtt FunctionUrl.FunctionUrl
+  FunctionName:
+    Value: !Ref Application
+  LogGroupName:
+    Value: !Ref LogGroup

@@ -1,0 +1,14 @@
+node_modules/
+.output/
+.nitro/
+.tanstack/
+dist/
+coverage/
+.deploy/
+.omx/
+.env
+.env.*
+!.env.example
+.DS_Store
+
+.venv/
