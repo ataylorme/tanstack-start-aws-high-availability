@@ -25,7 +25,7 @@ if (!process.argv.includes('--execute')) {
 5. Deploy the global stack in us-east-1; wait for CloudFront propagation.
 
 Run node scripts/deploy.ts --execute to create/update billable AWS resources.
-Requires Node 24+, AWS CLI v2 credentials, Docker buildx, zip, and npm ci.
+Requires Node 24+, AWS CLI v2 credentials, Docker buildx, zip, npm ci, and NODE_AUTH_TOKEN with package read access.
 No resources are deleted by this script.
 ${workflow ? 'Workflow tests enabled: deploy one MRSC table with east/west replicas and an Ohio witness, plus native sweepers in both regions.' : 'Workflow tests disabled.'}
 ECR upload mode: ${uploadMode}.`)
@@ -50,6 +50,7 @@ function output(region: string, stack: string, key: string): string {
   return value
 }
 
+if (!process.env.NODE_AUTH_TOKEN?.trim()) throw new Error('NODE_AUTH_TOKEN with GitHub Packages read access is required')
 run('docker', ['info'])
 run('zip', ['-v'])
 console.log(run('npm', ['run', 'check']))
@@ -123,7 +124,7 @@ const release = `${run('git', ['rev-parse', '--short', 'HEAD'])}-${Date.now()}`
 const image = `${prefix}:${release}`
 // Lambda requires a single-architecture manifest, not a provenance/index manifest.
 console.log(run('docker', ['buildx', 'build', '--platform', 'linux/amd64', '--provenance=false',
-  '--sbom=false', '--load', '--tag', image, '.']))
+  '--sbom=false', '--load', '--secret', 'id=node_auth_token,env=NODE_AUTH_TOKEN', '--tag', image, '.']))
 const archive = resolve(work, 'image.tar')
 if (uploadMode === 'api') run('docker', ['save', '--output', archive, image])
 let expectedDigest: string | undefined

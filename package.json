@@ -19,7 +19,7 @@
     "build:sweeper": "esbuild src/workflows/sweeper.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/sweeper/sweeper.js"
   },
   "dependencies": {
-    "@ataylorme/tanstack-workflow-aws": "git+https://github.com/ataylorme/tanstack-workflow-aws.git#f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c",
+    "@ataylorme/tanstack-workflow-aws": "0.1.0",
     "@tanstack/react-router": "1.170.38",
     "@tanstack/react-start": "1.168.56",
     "nitro": "3.0.260903-beta",

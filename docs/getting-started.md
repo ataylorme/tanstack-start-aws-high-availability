@@ -5,6 +5,9 @@ Prerequisites: Node **24.12+** (Node 24 LTS recommended) and npm.
 Start from a fresh clone. Commands in this guide run from the repository root.
 If you do not use nvm, install the Node version in `.nvmrc` with your preferred tool.
 
+This branch requires [GitHub Packages authentication](workflow-testing.md#package-authentication).
+Set `NODE_AUTH_TOKEN` before installing or building Docker images.
+
 ```sh
 git clone https://github.com/ataylorme/tanstack-start-aws-high-availability.git
 cd tanstack-start-aws-high-availability
@@ -35,6 +38,7 @@ so unit tests do not start the Vite/Nitro application build plugins.
 
 ```sh
 docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+  --secret id=node_auth_token,env=NODE_AUTH_TOKEN \
   --load -t tanstack-ha:local .
 docker run --rm --name tanstack-ha-local --read-only --tmpfs /tmp \
   -p 127.0.0.1:8080:8080 tanstack-ha:local

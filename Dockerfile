@@ -1,9 +1,9 @@
+# syntax=docker/dockerfile:1
 # The same HTTP server runs locally and inside Lambda via the Web Adapter.
 FROM node:24-bookworm-slim AS build
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json package-lock.json .npmrc ./
+RUN --mount=type=secret,id=node_auth_token,env=NODE_AUTH_TOKEN,required=true npm ci
 COPY . .
 RUN npm run build
 

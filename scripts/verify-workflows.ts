@@ -113,6 +113,6 @@ await scenario('concurrent duplicate start/signal and rejection', async () => {
 })
 mkdirSync('.deploy', { recursive: true })
 const report = `.deploy/workflow-validation-${Date.now()}.json`
-writeFileSync(report, JSON.stringify({ site: site.origin, testedAt: new Date().toISOString(), upstreamCommit: 'f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c', attemptedRuns, results }, null, 2))
+writeFileSync(report, JSON.stringify({ site: site.origin, testedAt: new Date().toISOString(), upstreamPackage: '@ataylorme/tanstack-workflow-aws@0.1.0', attemptedRuns, results }, null, 2))
 console.log(`Evidence: ${report}`)
 assert.ok(results.every(result => result.ok), 'Workflow validation failures; inspect the evidence report')

@@ -26,7 +26,10 @@ Use `ENABLE_WORKFLOW_TESTS=true` with a separate stack prefix; do not overwrite 
 ```sh
 git clone https://github.com/ataylorme/tanstack-start-aws-high-availability.git
 cd tanstack-start-aws-high-availability
+git switch test/tanstack-workflow-aws
 nvm install && nvm use
+# GitHub token needs read:packages and access to the published package.
+export NODE_AUTH_TOKEN="$(gh auth token)"
 npm ci
 npm run dev                   # http://localhost:3000
 ```
@@ -38,6 +41,7 @@ node scripts/deploy.ts         # offline plan only; no AWS calls
 # node scripts/deploy.ts --execute creates/updates billable AWS resources
 ```
 
+See [package authentication](docs/workflow-testing.md#package-authentication) for GitHub Packages setup.
 No AWS credentials are needed for local development. Pushing to GitHub runs validation,
 not deployment. The AWS example uses publicly invokable Function URLs with an
 application-level shared-secret guard, **not IAM origin isolation**; read the

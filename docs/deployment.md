@@ -7,6 +7,8 @@ Prerequisites:
 
 - AWS CLI v2, configured credentials (`AWS_PROFILE` is respected), Docker with buildx,
   `zip`, Node 24+, and `npm ci`.
+- For this workflow branch, `NODE_AUTH_TOKEN` with GitHub Packages read access; see
+  [package authentication](workflow-testing.md#package-authentication). Docker receives it only through a BuildKit secret.
 - Permissions for CloudFormation, IAM (including PassRole and the CloudFront/Lambda@Edge
   service-linked roles on first use), ECR, S3, Lambda, CloudFront, CloudWatch and Logs.
 - Sufficient regional Lambda concurrency and edge quotas; no VPC is required.

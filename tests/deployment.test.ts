@@ -38,6 +38,11 @@ describe('deployment safety', () => {
       env: { PATH: '', ENABLE_WORKFLOW_TESTS: 'true' }, stdio: 'pipe',
     })).toThrow()
   })
+  it('requires package credentials before execution invokes any external command', () => {
+    expect(() => execFileSync(process.execPath, ['scripts/deploy.ts', '--execute'], {
+      env, stdio: 'pipe',
+    })).toThrow('NODE_AUTH_TOKEN with GitHub Packages read access is required')
+  })
   it('requires explicit execution for a failure drill', () => {
     const output = execFileSync(process.execPath, ['scripts/set-failure.ts', 'us-west-2', 'true'], {
       env, encoding: 'utf8',

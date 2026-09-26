@@ -1,7 +1,6 @@
 # Workflow integration test branch
 
-This branch tests **`@ataylorme/tanstack-workflow-aws` 0.1.0**, pinned to upstream
-[`f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c`](https://github.com/ataylorme/tanstack-workflow-aws/tree/f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c).
+This branch tests the published **`@ataylorme/tanstack-workflow-aws@0.1.0`** package from GitHub Packages, pinned exactly in `package.json` and the lockfile.
 It imports the store and its matching bundled workflow/runtime snapshot—not an
 independently versioned TanStack Workflow engine. Upstream is experimental.
 The infrastructure is adapted from its MIT-licensed examples; see
@@ -38,10 +37,32 @@ seconds. The two definitions are shared by the web app and native sweepers:
   retry; signal; approval (including rejection); two durable sleeps; final region.
 - `timer-v1`: two sleeps and region-recording steps, useful for isolated sweeper recovery.
 
+## Package authentication
+
+Version 0.1.0 is published on **GitHub Packages**, not npmjs.org. The checked-in `.npmrc`
+routes only `@ataylorme` packages there and reads authentication from `NODE_AUTH_TOKEN`.
+Set that environment variable securely to a GitHub token with `read:packages` and package
+access. For an already-authorized GitHub CLI session with that scope:
+
+```sh
+export NODE_AUTH_TOKEN="$(gh auth token)"
+npm install --save-exact @ataylorme/tanstack-workflow-aws@0.1.0
+```
+
+Never commit the token. If your npm configuration enforces a minimum release age, a newly
+published version may be rejected until that period expires; review the release before
+using a one-command `--min-release-age=0` override. Do not disable the policy globally.
+
+CI uses `GITHUB_TOKEN` with `packages: read`. The upstream package must grant this repository
+Actions access in its package settings; the permission alone does not grant cross-repository
+access. Fork pull requests may also require maintainer validation in a trusted context.
+
 ## Deploy
 
 This creates billable resources including a three-region DynamoDB MRSC topology.
 Use a sandbox and keep workload small. Do not use the existing main site's prefix.
+
+First configure [package authentication](#package-authentication).
 
 ```sh
 npm ci
@@ -57,10 +78,11 @@ node scripts/deploy.ts             # offline plan
 node scripts/deploy.ts --execute   # create/update resources and verify HTTP routing
 ```
 
-The dependency is installed from a pinned public HTTPS Git reference. The Docker build
-stage includes Git/CA certificates for npm's prepare build; neither is added to the final
-runtime image. The lockfile fixes transitive dependencies. The `api` ECR mode requires
-`tar`, validates OCI blob hashes and sizes, and uploads the same saved image to both regions.
+The published package includes its compiled JavaScript and declarations, so Docker no longer
+needs Git or a source-package prepare build. The lockfile fixes the package tarball and
+integrity hash. Docker receives `NODE_AUTH_TOKEN` through a required BuildKit secret;
+credentials are not passed as build arguments or saved in image layers. The `api` ECR mode
+requires `tar`, validates OCI blob hashes and sizes, and uploads the same saved image to both regions.
 Do not rebuild an independent image per region.
 
 `origin-secret` and a **separate workflow API token** are saved with owner-only permissions

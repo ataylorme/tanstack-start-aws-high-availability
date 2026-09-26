@@ -1,12 +1,16 @@
 # Workflow AWS validation evidence
 
+> Historical AWS evidence: both deployments and their artifacts were subsequently torn down.
+> The branch now installs the published GitHub Packages release `@ataylorme/tanstack-workflow-aws@0.1.0`.
+> The AWS results below concern the earlier Git-pinned dependency, not a new deployment of the published tarball.
+
 Validated on **2026-09-26** against upstream
 [`f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c`](https://github.com/ataylorme/tanstack-workflow-aws/tree/f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c).
 
 ## Deployment
 
 - Branch: `test/tanstack-workflow-aws`.
-- Live lab: <https://d20xnhi2h10j2b.cloudfront.net>.
+- Former lab URL (deleted): `https://d20xnhi2h10j2b.cloudfront.net`.
 - AWS account: `963564733329`; isolated stack prefix: `tanstack-wf-test`.
 - All nine CloudFormation stacks reached `CREATE_COMPLETE`; CloudFront deployed.
 - DynamoDB MRSC: `ACTIVE`, `STRONG`, replicas in Northern Virginia/Oregon and an active Ohio witness.
@@ -69,4 +73,4 @@ A transient ECR upload connection failure was recovered with smaller upload part
 
 No upstream runtime defect was observed in these bounded scenarios. This is not production certification, load testing, a real AWS regional outage, or a quorum-loss experiment. Browser interactions were not automated; HTTP/API behavior and rendered markup were checked. Test runs intentionally contain no sensitive application data.
 
-The existing main deployment remained healthy at release `a603cab-update`; its resources were not updated. The isolated lab remains running and incurs AWS charges. The API token remains in the owner-only local file `.deploy/963564733329-tanstack-wf-test/workflow-test-token`, not in this repository. See [workflow-testing.md](workflow-testing.md) for use, repeatable validation and teardown.
+The existing main deployment remained healthy at release `a603cab-update`; its resources were not updated. The isolated lab and main deployment were later torn down at the owner's request. The API token remains in the owner-only local file `.deploy/963564733329-tanstack-wf-test/workflow-test-token`, not in this repository. See [workflow-testing.md](workflow-testing.md) for use, repeatable validation and teardown.
