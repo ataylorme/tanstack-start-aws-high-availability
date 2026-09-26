@@ -39,24 +39,44 @@ application-level shared-secret guard, **not IAM origin isolation**; read the
 
 ## Architecture
 
-```text
-Browser ── HTTPS ── CloudFront (dynamic caching disabled)
-                       │
-                       ├─ viewer-request Lambda@Edge: preserve public Host safely
-                       │
-                       └─ origin group / origin-request Lambda@Edge
-                            │
-                            ├─ preferred region (client-IP hash or demo override)
-                            │    └─ Function URL → Lambda Web Adapter → Node / TanStack Start
-                            │
-                            └─ other region on eligible failure
-                                 └─ Function URL → Lambda Web Adapter → Node / TanStack Start
+```mermaid
+flowchart TB
+    browser["Browser"]
 
-                  us-east-1                         us-west-2
-                  ECR + container Lambda            ECR + container Lambda
-                  edge ZIP + numbered version
-                  CloudFront global resources
+    subgraph global["Global: CloudFront and Lambda@Edge"]
+        cloudfront["CloudFront distribution<br/>Dynamic caching disabled"]
+        viewer["Viewer-request Lambda@Edge<br/>Preserve the public Host safely"]
+        router["Origin group + origin-request Lambda@Edge<br/>Choose preferred region; invert on failover"]
+        cloudfront --> viewer --> router
+    end
+
+    subgraph east["us-east-1: Northern Virginia"]
+        eastURL["Function URL"]
+        eastApp["Container Lambda<br/>Lambda Web Adapter → Node / TanStack Start"]
+        eastECR["Regional ECR repository"]
+        edgeCode["S3 edge ZIP + numbered Lambda version"]
+        eastURL --> eastApp
+        eastECR -. "Container image" .-> eastApp
+    end
+
+    subgraph west["us-west-2: Oregon"]
+        westURL["Function URL"]
+        westApp["Container Lambda<br/>Lambda Web Adapter → Node / TanStack Start"]
+        westECR["Regional ECR repository"]
+        westURL --> westApp
+        westECR -. "Same container image" .-> westApp
+    end
+
+    browser -->|HTTPS| cloudfront
+    router -->|Preferred or failover| eastURL
+    router -->|Preferred or failover| westURL
+    edgeCode -. "Replicated edge code" .-> viewer
+    edgeCode -. "Replicated edge code" .-> router
 ```
+
+Solid arrows show request flow; dashed arrows show deployment artifacts. Either region
+can be preferred. CloudFront attempts the other region only for eligible read failures,
+as detailed below.
 
 Both regions actively serve traffic. A SHA-256 hash of the viewer IP determines the
 preferred region, providing affinity without cookies or a shared store. Approximately
