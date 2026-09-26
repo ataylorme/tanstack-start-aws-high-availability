@@ -48,3 +48,12 @@ export function publicRequest(request: Request, env: OriginEnvironment): Request
   url.protocol = 'https:'
   return new Request(url, request)
 }
+
+/** Persist only an explicit, valid region choice made by a page link. */
+export function regionSelectionCookie(request: Request): string | undefined {
+  const url = new URL(request.url)
+  if (request.method !== 'GET' || url.pathname !== '/') return undefined
+  const region = url.searchParams.get('region')
+  if (region !== 'us-east-1' && region !== 'us-west-2') return undefined
+  return `ha-region=${region}; Path=/; HttpOnly; Secure; SameSite=Lax`
+}

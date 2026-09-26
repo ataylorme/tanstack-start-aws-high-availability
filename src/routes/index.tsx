@@ -37,7 +37,10 @@ function Home() {
       <dl><dt>Release</dt><dd>{info.release}</dd><dt>Server time</dt><dd>{info.timestamp}</dd></dl>
       <button onClick={() => void router.invalidate()}>Refresh server data</button>
     </section>
-    <div className="regions"><span>● us-east-1 / Northern Virginia</span><span>● us-west-2 / Oregon</span></div>
+    <nav className="regions" aria-label="Choose serving region">
+      <a href="/?region=us-east-1" aria-current={info.region === 'us-east-1' ? 'true' : undefined}>us-east-1 / Northern Virginia</a>
+      <a href="/?region=us-west-2" aria-current={info.region === 'us-west-2' ? 'true' : undefined}>us-west-2 / Oregon</a>
+    </nav>
     <section className="details"><h2>Active / active, with honest boundaries</h2>
       <p>Client-IP affinity distributes clients between both regions. If a read fails, CloudFront attempts the other region. Dynamic responses are not cached.</p>
       <p>GET, HEAD, and OPTIONS can fail over. POST and other writes are never automatically replayed. This stateless demo has no shared database or session store.</p>

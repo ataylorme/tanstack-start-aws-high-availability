@@ -41,6 +41,16 @@ async function smoke(failed: boolean): Promise<void> {
       assert.equal((await fetch(new URL(asset, base))).status, 200)
       assert.equal(page.headers.get('cache-control'), 'no-store')
     }
+    const selected = await fetch(`${base}/?region=us-west-2`, { headers })
+    assert.equal(selected.headers.get('set-cookie'), failed ? null :
+      'ha-region=us-west-2; Path=/; HttpOnly; Secure; SameSite=Lax')
+    if (!failed) {
+      const html = await selected.text()
+      assert.match(html, /href="\/\?region=us-east-1"/)
+      assert.match(html, /href="\/\?region=us-west-2"/)
+      assert.match(html, /aria-current="true"/)
+    }
+    assert.equal((await fetch(`${base}/?region=us-west-2`)).headers.get('set-cookie'), null)
     console.log(`Production server smoke (${failed ? 'simulated failure' : 'healthy'}): passed`)
   } finally {
     if (server.exitCode === null) {

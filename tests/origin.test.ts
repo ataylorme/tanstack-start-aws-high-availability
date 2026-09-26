@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { checkOrigin, publicRequest, regionInfo } from '../src/lib/origin'
+import { checkOrigin, publicRequest, regionInfo, regionSelectionCookie } from '../src/lib/origin'
 
 function request(path = '/', secret?: string): Request {
   return new Request(`https://example.lambda-url.us-east-1.on.aws${path}`, {
@@ -84,5 +84,18 @@ describe('public URL reconstruction', () => {
   it.each([undefined, '', 'https://attacker.test', 'user@attacker.test', 'example.com/path', 'example.com,attacker.test'])('ignores missing or malformed forwarded host %#', (host) => {
     const input = new Request('http://localhost:3000/', { headers: host === undefined ? {} : { 'x-forwarded-host': host } })
     expect(publicRequest(input, { ORIGIN_SECRET: 'secret' })).toBe(input)
+  })
+})
+
+describe('region preference cookie', () => {
+  it.each(['us-east-1', 'us-west-2'])('stores %s as a secure session cookie', (region) => {
+    expect(regionSelectionCookie(request(`/?region=${region}`)))
+      .toBe(`ha-region=${region}; Path=/; HttpOnly; Secure; SameSite=Lax`)
+  })
+  it.each(['/', '/?region=invalid', '/healthz?region=us-east-1'])('does not set a cookie for %s', (path) => {
+    expect(regionSelectionCookie(request(path))).toBeUndefined()
+  })
+  it('does not set a preference on a POST', () => {
+    expect(regionSelectionCookie(new Request('https://example.test/?region=us-east-1', { method: 'POST' }))).toBeUndefined()
   })
 })

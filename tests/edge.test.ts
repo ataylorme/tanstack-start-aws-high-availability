@@ -96,3 +96,35 @@ describe('active/active origin selection', () => {
     expect(() => routeRequest(event(request(), 'origin-response'), config)).toThrow('Unsupported event type')
   })
 })
+
+describe('region links and browser affinity', () => {
+  it.each(['us-east-1', 'us-west-2'] as const)('routes links and subsequent cookie requests to %s', (region) => {
+    const input = request()
+    input.querystring = `region=${region}`
+    expect(preferredRegion(input)).toBe(region)
+    input.querystring = ''
+    input.headers.cookie = [{ value: `session=example; ha-region=${region}` }]
+    expect(preferredRegion(input)).toBe(region)
+  })
+  it('prioritizes diagnostic header, then link, then cookie', () => {
+    const input = request()
+    input.querystring = 'region=us-west-2'
+    input.headers.cookie = [{ value: 'ha-region=us-east-1' }]
+    expect(preferredRegion(input)).toBe('us-west-2')
+    input.headers['x-ha-region'] = [{ value: 'us-east-1' }]
+    expect(preferredRegion(input)).toBe('us-east-1')
+  })
+  it('ignores invalid choices and similarly named cookies', () => {
+    const input = request()
+    const affinity = preferredRegion(input)
+    input.querystring = 'region=attacker.test'
+    input.headers.cookie = [{ value: 'other-ha-region=us-west-2; ha-region=invalid' }]
+    expect(preferredRegion(input)).toBe(affinity)
+  })
+  it.each(['us-east-1', 'us-west-2'] as const)('preserves failover for a %s selection', (region) => {
+    const input = request('secondary')
+    input.querystring = `region=${region}`
+    expect(routeRequest(event(input), config).origin?.custom?.domainName)
+      .toBe(region === 'us-east-1' ? config.westDomain : config.eastDomain)
+  })
+})

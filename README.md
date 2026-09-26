@@ -77,10 +77,18 @@ Solid arrows show request flow; dashed arrows show deployment artifacts. Either 
 can be preferred. CloudFront attempts the other region only for eligible read failures,
 as detailed below.
 
-Both regions actively serve traffic. A SHA-256 hash of the viewer IP determines the
+Both regions actively serve traffic. By default, a SHA-256 hash of the viewer IP determines the
 preferred region, providing affinity without cookies or a shared store. Approximately
 half of **clients**, not necessarily half of requests, go to each region; this is not
 latency/geolocation routing. NAT users share affinity.
+
+The region buttons are ordinary links (`/?region=us-east-1` and `/?region=us-west-2`)
+that reload the page through CloudFront. A secure, HttpOnly session cookie remembers
+an explicit choice for subsequent refreshes and server functions. The currently serving
+region is highlighted; reads can still fail over if the chosen region is unavailable.
+Routing precedence is `X-HA-Region`, then the `region` query parameter, then the
+`ha-region` cookie, then IP affinity. Only the two supported region values are accepted.
+Region switching requires AWS edge routing; local development remains one server.
 
 CloudFront's configured origins are **attempt slots**, not fixed regional roles:
 

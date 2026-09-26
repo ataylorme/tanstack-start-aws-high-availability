@@ -123,7 +123,9 @@ export SITE_URL="$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue | [0]" --output text)"
 ```
 A public **demo-only** `X-HA-Region` header selects the preferred region; unknown values
-fall back to IP affinity. It can never select an arbitrary origin.
+fall back to the link/cookie preference or IP affinity. It can never select an arbitrary origin.
+The page’s region links use `?region=us-east-1` or `?region=us-west-2`; the successful
+page response sets a session preference cookie for subsequent server-function requests.
 
 ```sh
 node scripts/verify-deployment.ts "$SITE_URL"

@@ -22,6 +22,14 @@ export function preferredRegion(request: CloudFrontRequest): Region {
   // An intentional, public demo override. It selects only these two origins.
   const override = request.headers['x-ha-region']?.[0]?.value
   if (override === 'us-east-1' || override === 'us-west-2') return override
+  const selection = new URLSearchParams(request.querystring).get('region')
+  if (selection === 'us-east-1' || selection === 'us-west-2') return selection
+  for (const header of request.headers.cookie ?? []) {
+    for (const cookie of header.value.split(';')) {
+      const match = /^ha-region=(us-east-1|us-west-2)$/.exec(cookie.trim())
+      if (match?.[1] === 'us-east-1' || match?.[1] === 'us-west-2') return match[1]
+    }
+  }
   // Stable across the two origin attempts; not a promise of equal request volume.
   const byte = createHash('sha256').update(request.clientIp).digest().readUInt8(0)
   return byte < 128 ? 'us-east-1' : 'us-west-2'
