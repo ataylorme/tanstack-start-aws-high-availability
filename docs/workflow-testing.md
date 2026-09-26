@@ -23,10 +23,11 @@ flowchart TB
     westEvents["EventBridge: every minute"] --> westSweep["Private native sweep Lambda"] --> westDB
 ```
 
-The default test prefix is `tanstack-wf-test`. It creates **eight stacks**: bootstrap,
+The default test prefix is `tanstack-wf-test`. It creates **nine stacks**: bootstrap,
 app and sweeper in each application region, global ingress in east, and one global-table
-stack in west. The table creates both replicas and the Ohio witness. Existing
+stack plus a table-specific CloudFormation execution-role stack in west. The table creates both replicas and the Ohio witness. Existing
 `tanstack-ha` resources are not changed. Ordinary MREC tables cannot safely replace MRSC.
+The table stack uses a dedicated CloudFormation service role for asynchronous replica creation; its DynamoDB permissions are restricted to the one test table and its children in the three participating regions.
 No Aurora DSQL, business database, email, payment, or other external side effect is added.
 
 Every runtime call uses a fresh owner in both `withLeaseOwner` and `leaseOwner`.
@@ -118,7 +119,7 @@ outbox. Preserve compatible workflow versions for in-flight runs during updates.
 
 Stop both test schedules before teardown, then delete the test global stack, both sweeper
 stacks, both app stacks, and both bootstrap stacks. Delete the west workflow-table stack
-last. Use only the **test** prefix. These are destructive actions; the deployment script
+last. Delete the workflow-deployer role stack only after table operations finish. Use only the **test** prefix. These are destructive actions; the deployment script
 never performs them. Retained ECR/S3/logs/edge resources and the MRSC table require explicit
 cleanup after recording any evidence. A deleted table stack does not delete the retained
 table or stop its storage charges. The main `tanstack-ha` deployment is separate.

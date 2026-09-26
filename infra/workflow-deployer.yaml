@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Dedicated CloudFormation service role for asynchronous MRSC test-table provisioning
+Parameters:
+  TableName:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9_.-]{3,255}'
+Resources:
+  DeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OnlyThisWorkflowTable
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'dynamodb:*'
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:us-east-1:${AWS::AccountId}:table/${TableName}'
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:us-west-2:${AWS::AccountId}:table/${TableName}'
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:us-east-2:${AWS::AccountId}:table/${TableName}'
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:us-east-1:${AWS::AccountId}:table/${TableName}/*'
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:us-west-2:${AWS::AccountId}:table/${TableName}/*'
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:us-east-2:${AWS::AccountId}:table/${TableName}/*'
+              - Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/replication.dynamodb.amazonaws.com/AWSServiceRoleForDynamoDBReplication'
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName: replication.dynamodb.amazonaws.com
+Outputs:
+  RoleArn:
+    Value: !GetAtt DeploymentRole.Arn

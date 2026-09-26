@@ -22,7 +22,10 @@ const current = aws(['cloudformation', 'describe-stacks', '--stack-name', stack,
 if (current === enabled) {
   console.log('Already in the requested state')
 } else {
-  const parameters = ['ImageUri', 'OriginSecret', 'ReleaseId'].map((ParameterKey) =>
+  const keys: unknown = JSON.parse(aws(['cloudformation', 'describe-stacks', '--stack-name', stack,
+    '--query', 'Stacks[0].Parameters[].ParameterKey', '--output', 'json']))
+  if (!Array.isArray(keys) || !keys.every((key: unknown) => typeof key === 'string')) throw new Error('Invalid stack parameter keys')
+  const parameters = keys.filter((key: string) => key !== 'SimulateFailure').map((ParameterKey: string) =>
     ({ ParameterKey, UsePreviousValue: true }))
   aws(['cloudformation', 'update-stack', '--stack-name', stack, '--use-previous-template',
     '--capabilities', 'CAPABILITY_IAM', '--parameters', JSON.stringify([

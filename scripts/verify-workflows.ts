@@ -16,6 +16,7 @@ assert.match(token, /^[a-f0-9]{64}$/)
 type Region = 'us-east-1' | 'us-west-2'
 const regions: Region[] = ['us-east-1', 'us-west-2']
 const results: { scenario: string; runId?: string; ok: boolean; detail: unknown }[] = []
+const attemptedRuns: { scenario: string; runId: string }[] = []
 function object(value: unknown): Record<string, unknown> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value))
   return value as Record<string, unknown>
@@ -62,6 +63,7 @@ await scenario('authentication', async () => {
 await Promise.all(regions.map(startRegion => scenario(`cross-region ${startRegion}`, async () => {
   const other = startRegion === 'us-east-1' ? 'us-west-2' : 'us-east-1'
   const runId = `test-${randomUUID()}`
+  attemptedRuns.push({ scenario: `cross-region ${startRegion}`, runId })
   await call(startRegion, { action: 'start', workflowId: 'validation-v1', runId })
   const initial = await call(other, runId)
   assert.equal(object(initial.run).status, 'paused')
@@ -77,6 +79,7 @@ await Promise.all(regions.map(startRegion => scenario(`cross-region ${startRegio
   assert.equal(object(output.started).region, startRegion)
   assert.equal(object(output.signaled).region, other)
   assert.equal(object(output.retry).attempt, 2)
+  assert.equal(object(output.signal).message, startRegion)
   assert.equal(output.approved, true)
   assert.ok(regions.includes(object(output.finished).region as Region))
   assert.equal(events(view).filter(event => event.eventType === 'SIGNAL_RESOLVED').length, 3) // explicit signal + two timer signals
@@ -88,6 +91,7 @@ await Promise.all(regions.map(startRegion => scenario(`cross-region ${startRegio
 })))
 await scenario('concurrent duplicate start/signal and rejection', async () => {
   const runId = `test-${randomUUID()}`
+  attemptedRuns.push({ scenario: 'concurrent duplicate start/signal and rejection', runId })
   await Promise.all(regions.map(region => call(region, { action: 'start', workflowId: 'validation-v1', runId })))
   await Promise.all(regions.map(region => call(region, { action: 'signal', runId, signalId: 'concurrent', message: 'one delivery' })))
   const waiting = await call('us-east-1', runId)
@@ -95,12 +99,13 @@ await scenario('concurrent duplicate start/signal and rejection', async () => {
   await call('us-west-2', { action: 'approve', runId, approvalId: waiting.approvalId, approved: false })
   const view = await finished('us-east-1', runId)
   assert.equal(object(object(view.run).output).approved, false)
+  assert.equal(object(object(object(view.run).output).signal).message, 'one delivery')
   assert.equal(events(view).filter(event => event.eventType === 'SIGNAL_RESOLVED').length, 1)
   assert.equal(events(view).filter(event => event.eventType === 'APPROVAL_RESOLVED').length, 1)
   return { runId, eventCount: events(view).length }
 })
 mkdirSync('.deploy', { recursive: true })
 const report = `.deploy/workflow-validation-${Date.now()}.json`
-writeFileSync(report, JSON.stringify({ site: site.origin, testedAt: new Date().toISOString(), upstreamCommit: 'f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c', results }, null, 2))
+writeFileSync(report, JSON.stringify({ site: site.origin, testedAt: new Date().toISOString(), upstreamCommit: 'f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c', attemptedRuns, results }, null, 2))
 console.log(`Evidence: ${report}`)
 assert.ok(results.every(result => result.ok), 'Workflow validation failures; inspect the evidence report')

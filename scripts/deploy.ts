@@ -96,7 +96,7 @@ if (workflow) {
   if (!/^[a-f0-9]{64}$/.test(workflowToken)) throw new Error('Workflow test token must be 64 lowercase hex characters')
 }
 
-function deploy(region: string, stack: string, template: string, parameters: Record<string, string> = {}): void {
+function deploy(region: string, stack: string, template: string, parameters: Record<string, string> = {}, roleArn?: string): void {
   console.log(`Deploying ${stack} in ${region}`)
   const file = resolve(work, `${region}-${stack}-parameters.json`)
   // Parameter values (including secret) never appear in CLI arguments or logs.
@@ -105,7 +105,8 @@ function deploy(region: string, stack: string, template: string, parameters: Rec
   try {
     console.log(aws(region, ['cloudformation', 'deploy', '--stack-name', stack,
       '--template-file', template, '--capabilities', 'CAPABILITY_IAM',
-      '--no-fail-on-empty-changeset', '--parameter-overrides', `file://${file}`]))
+      '--no-fail-on-empty-changeset', '--parameter-overrides', `file://${file}`,
+      ...(roleArn ? ['--role-arn', roleArn] : [])]))
   } finally {
     rmSync(file)
   }
@@ -113,7 +114,9 @@ function deploy(region: string, stack: string, template: string, parameters: Rec
 
 for (const region of regions) deploy(region, `${prefix}-bootstrap`, 'infra/bootstrap.yaml')
 if (workflow) {
-  deploy('us-west-2', `${prefix}-workflow-table`, 'infra/workflow-table.yaml', { TableName: workflowTable })
+  deploy('us-west-2', `${prefix}-workflow-deployer`, 'infra/workflow-deployer.yaml', { TableName: workflowTable })
+  const tableRole = output('us-west-2', `${prefix}-workflow-deployer`, 'RoleArn')
+  deploy('us-west-2', `${prefix}-workflow-table`, 'infra/workflow-table.yaml', { TableName: workflowTable }, tableRole)
   for (const region of regions) aws(region, ['dynamodb', 'wait', 'table-exists', '--table-name', workflowTable])
 }
 const release = `${run('git', ['rev-parse', '--short', 'HEAD'])}-${Date.now()}`
