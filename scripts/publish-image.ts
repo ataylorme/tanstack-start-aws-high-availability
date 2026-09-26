@@ -48,6 +48,13 @@ export function publishImage(options: {
   const blobs = [descriptor(parsed.config), ...parsed.layers.map(descriptor)]
   // Validate every byte before publishing anything.
   for (const entry of blobs) assert.equal(blob(archive, entry.digest).length, entry.size)
+  const existing = aws(region, ['ecr', 'batch-get-image', '--repository-name', repository,
+    '--image-ids', `imageTag=${release}`, '--query', 'images[0].imageId.imageDigest', '--output', 'text'])
+  if (existing && existing !== 'None') {
+    assert.equal(existing, manifestDigest, 'Existing immutable release tag has a different digest')
+    console.log(`${region}: release already published at ${manifestDigest}`)
+    return manifestDigest
+  }
   const manifestFile = resolve(work, 'manifest.json')
   writeFileSync(manifestFile, manifest, { mode: 0o600 })
   for (const entry of blobs) {
@@ -58,7 +65,7 @@ export function publishImage(options: {
     const started: unknown = JSON.parse(aws(region, ['ecr', 'initiate-layer-upload', '--repository-name', repository, '--output', 'json']))
     assert.ok(typeof started === 'object' && started !== null && 'uploadId' in started && typeof started.uploadId === 'string' && 'partSize' in started && typeof started.partSize === 'number')
     const uploadId = started.uploadId
-    const partSize = Math.min(started.partSize, 20 * 1024 * 1024)
+    const partSize = Math.min(started.partSize, 5 * 1024 * 1024)
     assert.ok(Number.isSafeInteger(partSize) && partSize >= 5 * 1024 * 1024)
     const file = resolve(work, 'upload-part.bin')
     try {

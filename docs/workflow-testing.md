@@ -23,7 +23,7 @@ flowchart TB
     westEvents["EventBridge: every minute"] --> westSweep["Private native sweep Lambda"] --> westDB
 ```
 
-The default test prefix is `tanstack-wf-test`. It creates **nine stacks**: bootstrap,
+The recommended test prefix is `tanstack-wf-test`. It creates **nine stacks**: bootstrap,
 app and sweeper in each application region, global ingress in east, and one global-table
 stack plus a table-specific CloudFormation execution-role stack in west. The table creates both replicas and the Ohio witness. Existing
 `tanstack-ha` resources are not changed. Ordinary MREC tables cannot safely replace MRSC.
@@ -86,9 +86,20 @@ production user/tenant authorization or rate limiting.
 export SITE_URL="$(aws cloudformation describe-stacks --region us-east-1 \
   --stack-name "$STACK_PREFIX-global" \
   --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue | [0]" --output text)"
-export WORKFLOW_TEST_TOKEN_FILE="$PWD/.deploy/963564733329-$STACK_PREFIX/workflow-test-token"
+export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+export WORKFLOW_TEST_TOKEN_FILE="$PWD/.deploy/$ACCOUNT_ID-$STACK_PREFIX/workflow-test-token"
 node scripts/verify-workflows.ts "$SITE_URL" --execute
 ```
+
+For controlled worker recovery (briefly disables one test EventBridge schedule at a time,
+restores it in `finally`, then reverses regions):
+
+```sh
+node scripts/verify-workflow-recovery.ts "$SITE_URL" --execute
+```
+
+Only run against these isolated test stacks. It verifies both timer steps finish in the
+other worker region, not an actual AWS region outage or loss of DynamoDB quorum.
 
 The bounded acceptance runner checks auth, strongly consistent cross-region inspection,
 start/signal/approval in both directions, duplicate and concurrent requests, approval

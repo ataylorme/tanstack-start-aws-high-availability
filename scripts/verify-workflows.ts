@@ -40,16 +40,21 @@ function events(view: Record<string, unknown>) {
   entries.forEach((event, index) => assert.equal(event.eventIndex, index, 'Contiguous committed event indices'))
   return entries
 }
-async function finished(region: Region, runId: string) {
+async function waitFor(region: Region, runId: string, ready: (view: Record<string, unknown>) => boolean) {
   const deadline = Date.now() + 240_000
   while (Date.now() < deadline) {
     const view = await call(region, runId)
     const run = object(view.run)
     assert.notEqual(run.status, 'errored', JSON.stringify(run.error))
-    if (run.status === 'finished') return view
+    if (ready(view)) return view
     await setTimeout(5000)
   }
   throw new Error(`Timed out waiting for scheduled sweepers: ${runId}`)
+}
+const finished = (region: Region, runId: string) => waitFor(region, runId, view => object(view.run).status === 'finished')
+const waitingForSignal = (view: Record<string, unknown>) => {
+  const waiting = object(view.run).waitingFor
+  return !!waiting && object(waiting).signalName === 'continue'
 }
 async function scenario(name: string, test: () => Promise<unknown>) {
   try { const detail = await test(); results.push({ scenario: name, ok: true, detail }); console.log(`${name}: PASS`) }
@@ -66,9 +71,10 @@ await Promise.all(regions.map(startRegion => scenario(`cross-region ${startRegio
   attemptedRuns.push({ scenario: `cross-region ${startRegion}`, runId })
   await call(startRegion, { action: 'start', workflowId: 'validation-v1', runId })
   const initial = await call(other, runId)
-  assert.equal(object(initial.run).status, 'paused')
+  assert.equal(object(initial.run).workflowId, 'validation-v1')
+  await waitFor(other, runId, waitingForSignal)
   await call(other, { action: 'signal', runId, signalId: 'once', message: startRegion })
-  const waiting = await call(startRegion, runId)
+  const waiting = await waitFor(startRegion, runId, view => typeof view.approvalId === 'string')
   assert.equal(typeof waiting.approvalId, 'string')
   const duplicate = await call(startRegion, { action: 'signal', runId, signalId: 'once', message: startRegion })
   assert.equal(duplicate.kind, 'duplicate')
@@ -93,8 +99,9 @@ await scenario('concurrent duplicate start/signal and rejection', async () => {
   const runId = `test-${randomUUID()}`
   attemptedRuns.push({ scenario: 'concurrent duplicate start/signal and rejection', runId })
   await Promise.all(regions.map(region => call(region, { action: 'start', workflowId: 'validation-v1', runId })))
+  await waitFor('us-east-1', runId, waitingForSignal)
   await Promise.all(regions.map(region => call(region, { action: 'signal', runId, signalId: 'concurrent', message: 'one delivery' })))
-  const waiting = await call('us-east-1', runId)
+  const waiting = await waitFor('us-east-1', runId, view => typeof view.approvalId === 'string')
   assert.equal(typeof waiting.approvalId, 'string')
   await call('us-west-2', { action: 'approve', runId, approvalId: waiting.approvalId, approved: false })
   const view = await finished('us-east-1', runId)
