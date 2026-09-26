@@ -18,6 +18,9 @@ Parameters:
   EdgeCodeKey:
     Type: String
     Description: Immutable content-addressed ZIP key
+  ViewerFunctionCode:
+    Type: String
+    Description: Type-stripped viewer/handler.ts with CloudFront runtime import
   EdgeCodeSha256:
     Type: String
     Description: Base64 SHA256 of the ZIP, forces a new numbered version on change
@@ -63,6 +66,15 @@ Resources:
     Properties:
       FunctionName: !Ref EdgeRouter
       CodeSha256: !Ref EdgeCodeSha256
+  ViewerFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${AWS::StackName}-viewer'
+      AutoPublish: true
+      FunctionCode: !Ref ViewerFunctionCode
+      FunctionConfig:
+        Comment: Sanitize public host and enable read-only request-scoped failover
+        Runtime: cloudfront-js-2.0
   ForwardViewer:
     Type: AWS::CloudFront::OriginRequestPolicy
     Properties:
@@ -115,21 +127,8 @@ Resources:
                 HeaderValue: secondary
               - HeaderName: x-origin-verify
                 HeaderValue: !Ref OriginSecret
-        OriginGroups:
-          Quantity: 1
-          Items:
-            - Id: regional-pair
-              FailoverCriteria:
-                StatusCodes:
-                  Quantity: 6
-                  Items: [429, 500, 502, 503, 504, 404]
-              Members:
-                Quantity: 2
-                Items:
-                  - OriginId: primary-slot
-                  - OriginId: secondary-slot
         DefaultCacheBehavior:
-          TargetOriginId: regional-pair
+          TargetOriginId: primary-slot
           ViewerProtocolPolicy: redirect-to-https
           AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
           CachedMethods: [GET, HEAD, OPTIONS]
@@ -137,10 +136,10 @@ Resources:
           CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
           OriginRequestPolicyId: !Ref ForwardViewer
           Compress: true
-          LambdaFunctionAssociations:
+          FunctionAssociations:
             - EventType: viewer-request
-              LambdaFunctionARN: !Ref EdgeVersion
-              IncludeBody: false
+              FunctionARN: !GetAtt ViewerFunction.FunctionARN
+          LambdaFunctionAssociations:
             - EventType: origin-request
               LambdaFunctionARN: !Ref EdgeVersion
               IncludeBody: false

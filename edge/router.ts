@@ -31,16 +31,6 @@ export function routeRequest(event: CloudFrontRequestEvent, config: RoutingConfi
   const cf = event.Records[0]?.cf
   if (!cf) throw new Error('Missing CloudFront event')
   const request = cf.request
-  if (cf.config.eventType === 'viewer-request') {
-    const host = request.headers.host?.[0]?.value
-    if (!host) throw new Error('Missing viewer Host')
-    // Overwrite spoofable forwarded headers. Start needs the public URL for CSRF.
-    request.headers['x-forwarded-host'] = [{ key: 'X-Forwarded-Host', value: host }]
-    // X-Forwarded-Proto is forbidden in Lambda@Edge; the app uses HTTPS.
-    delete request.headers['x-origin-verify']
-    delete request.headers['x-origin-slot']
-    return request
-  }
   if (cf.config.eventType !== 'origin-request') throw new Error('Unsupported event type')
   const origin = request.origin?.custom
   if (!origin) throw new Error('Expected custom origin')

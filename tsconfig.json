@@ -19,5 +19,5 @@
     "noEmit": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "edge", "scripts", "tests", "*.config.ts"]
+  "include": ["src", "edge", "viewer", "scripts", "tests", "*.config.ts"]
 }

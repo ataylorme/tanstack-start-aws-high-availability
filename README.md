@@ -5,8 +5,8 @@ A stateless, strictly typed TanStack Start example running the **same container 
 Infrastructure is plain **CloudFormation**, not CDK, SAM, or Terraform.
 
 > This is an executable reference example, not a production availability guarantee.
-> Local builds, unit tests and smoke checks are provided; actual AWS routing and failover
-> must be verified after deployment. CloudFront **does not automatically retry writes**.
+> AWS active/active routing and both-direction HTTP failover were verified on 2026-09-26.
+> Re-run verification for your deployment. CloudFront **does not automatically retry writes**.
 
 ## Start here
 
@@ -45,8 +45,8 @@ flowchart TB
 
     subgraph global["Global: CloudFront and Lambda@Edge"]
         cloudfront["CloudFront distribution<br/>Dynamic caching disabled"]
-        viewer["Viewer-request Lambda@Edge<br/>Preserve the public Host safely"]
-        router["Origin group + origin-request Lambda@Edge<br/>Choose preferred region; invert on failover"]
+        viewer["Viewer-request CloudFront Function<br/>Preserve Host; create failover group for reads"]
+        router["Origin-request Lambda@Edge<br/>Choose preferred region; invert on failover"]
         cloudfront --> viewer --> router
     end
 
@@ -70,7 +70,6 @@ flowchart TB
     browser -->|HTTPS| cloudfront
     router -->|Preferred or failover| eastURL
     router -->|Preferred or failover| westURL
-    edgeCode -. "Replicated edge code" .-> viewer
     edgeCode -. "Replicated edge code" .-> router
 ```
 
@@ -92,8 +91,11 @@ CloudFront's configured origins are **attempt slots**, not fixed regional roles:
 
 The origin-request function reads the slot from CloudFront's configured custom origin
 headers and changes both the origin domain and HTTP Host. It does **not** randomly
-pick again on retry. The same edge function has a viewer-request association to overwrite
-`X-Forwarded-Host`; the application restores the public HTTPS URL for server functions.
+pick again on retry. A viewer-request **CloudFront Function (JavaScript runtime 2.0)**
+overwrites `X-Forwarded-Host` and creates a request-scoped origin group only for
+GET/HEAD/OPTIONS. Writes retain the single-origin behavior and still use Lambda@Edge
+regional selection. A static origin-group behavior cannot allow write methods.
+The application restores the public HTTPS URL for server functions.
 No request body is included in edge events; CloudFront forwards bodies untouched.
 
 ### Availability boundaries
@@ -120,10 +122,11 @@ No request body is included in edge events; CloudFront forwards bodies untouched
 | Path | Purpose |
 | --- | --- |
 | `src/` | Start SSR UI, typed server functions, origin guard, region metadata |
-| `edge/` | Strict typed viewer/origin request router, compiled separately for Lambda@Edge |
+| `edge/` | Strict typed origin-request router, compiled separately for Lambda@Edge |
+| `viewer/` | Strict typed CloudFront Function, packaged by `scripts/viewer-code.ts` |
 | `infra/bootstrap.yaml` | Regional ECR and east-region artifact bucket |
 | `infra/regional.yaml` | Container Lambda, Function URL permissions, logs and alarms |
-| `infra/global.yaml` | Edge function/version, CloudFront origin group and policies |
+| `infra/global.yaml` | Edge function/version, viewer function, CloudFront distribution and policies |
 | `scripts/` | Explicit deployment, regional failure toggling, local and live smoke checks |
 | `tests/` | Vitest routing, origin security, URL reconstruction and tooling safety tests |
 | `.github/workflows/ci.yaml` | Build, strict typecheck, Vitest, smoke, IaC lint and container smoke |
@@ -143,6 +146,7 @@ confuse those with a failed build. Revalidate updates before changing pinned ver
 - [TanStack Start Node.js / Docker hosting](https://tanstack.com/start/latest/docs/framework/react/guide/hosting#node-js-docker)
 - [TanStack custom server entry](https://tanstack.com/start/latest/docs/framework/react/guide/server-entry-point)
 - [AWS Lambda Web Adapter](https://github.com/aws/aws-lambda-web-adapter)
+- [CloudFront Functions request-scoped origin groups](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/helper-functions-origin-modification.html)
 - [CloudFront origin failover and repeated edge invocation](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html)
 - [Lambda@Edge dynamic origin selection / event structure](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html)
 - [Lambda@Edge restrictions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-at-edge-function-restrictions.html)

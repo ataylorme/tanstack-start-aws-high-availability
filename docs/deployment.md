@@ -12,6 +12,10 @@ Prerequisites:
 - Sufficient regional Lambda concurrency and edge quotas; no VPC is required.
 - Commercial AWS partition; regions are intentionally fixed to the requested pair.
 
+For browser-based temporary credentials, use a recent AWS CLI v2 and
+`aws login --profile your-sandbox-profile`; a long-lived IAM access key is not required.
+Confirm the resulting identity before deployment. Avoid root credentials.
+
 ## First deployment
 
 Complete the [local setup and checks](getting-started.md) first. Run commands from the
@@ -45,7 +49,7 @@ are created by following the local development guide alone.
 | `<prefix>-bootstrap` | `us-west-2` | ECR repository |
 | `<prefix>-app` | `us-east-1` | Container Lambda, URL, logs, alarms |
 | `<prefix>-app` | `us-west-2` | Container Lambda, URL, logs, alarms |
-| `<prefix>-global` | `us-east-1` | Lambda@Edge function/version, global CloudFront distribution, alarm |
+| `<prefix>-global` | `us-east-1` | Lambda@Edge function/version, viewer CloudFront Function, global distribution, alarm |
 
 The script:
 
@@ -60,7 +64,8 @@ The script:
 5. Deploys `<prefix>-app` in both regions. Function URLs are passed as parameters,
    avoiding cross-region CloudFormation exports.
 6. Compiles CommonJS edge code, bundles the two non-secret origin domains in JSON,
-   uploads a content-addressed ZIP and deploys `<prefix>-global` **in us-east-1**.
+   uploads a content-addressed ZIP, strips types from the viewer CloudFront Function,
+   and deploys `<prefix>-global` **in us-east-1**.
 7. Publishes a numbered Lambda@Edge version using the ZIP hash and waits for CloudFront
    propagation. It runs the live regional verification script and prints the site URL.
 
@@ -126,6 +131,9 @@ curl -i -H 'X-HA-Region: us-east-1' "$SITE_URL/healthz"
 curl -i -H 'X-HA-Region: us-west-2' "$SITE_URL/healthz"
 ```
 
+The verification script checks SSR plus GET/HEAD/OPTIONS/POST/PUT/PATCH/DELETE on the
+side-effect-free health endpoint. With a failed-region argument, it checks read failover
+and confirms write methods return 503 from that region rather than being replayed.
 Inspect `X-Served-By-Region` and the JSON `region`; both should match the preference.
 Open the site in a browser and exercise both server-function buttons. A direct origin `/`
 or `/healthz` request without the secret should return **403** (not `/readyz` or assets).
@@ -167,8 +175,9 @@ CloudFront's method-specific behavior, not a durable application write.
 - SSR, health and server functions have caching disabled; errors have zero cache TTL.
   Static assets share that behavior for clarity (not optimal cost/performance). There are
   no cached success responses to disguise regional failures in the drill.
-- Expect two edge invocations per uncached successful request (viewer + origin), an extra
-  origin invocation on failover, application Lambda usage, data transfer, image storage,
+- Expect one CloudFront Function invocation and one Lambda@Edge invocation per uncached
+  successful request, an extra origin invocation on failover, application Lambda usage,
+  data transfer, image storage,
   logs, alarms, and S3 charges. Budget before public load testing.
 - Teardown is intentionally manual/destructive: delete the **global stack first**, wait
   for CloudFront disassociation/edge replication cleanup, then delete regional app stacks
@@ -197,8 +206,10 @@ Use the failing stack and its region; west-region errors are not in the east sta
 | --- | --- |
 | Credential or access-denied error | Check the selected profile/account and failing API in stack events; use your account's approved deployment role |
 | Missing saved origin secret | Restore `.deploy/<account>-<prefix>/origin-secret` from secure backup, keep permissions `0600`; do not silently generate a new one |
+| Docker push fails through a Docker Desktop proxy | Check Docker daemon networking separately from host AWS CLI connectivity. Retry the same image; do not rebuild independently per region. The initial deployment used host ECR multipart upload to preserve the exact OCI manifest after proxy failures. |
 | Image URI/manifest error | Confirm the digest belongs to ECR in the same region as Lambda, built for `linux/amd64` with provenance disabled |
 | Site returns 403 | Check both Function URL permissions and that CloudFront and both Lambdas use the same secret; do not log or paste it |
+| Site returns 503 with `FunctionExecutionError` | Use CloudFront TestFunction to inspect the viewer function error; JS 2.0 supports only a subset of modern JavaScript (for example, no optional chaining) |
 | Site returns 502 | Inspect Lambda@Edge logs and associations; confirm domains, configured slot headers, numbered version, and permitted request headers |
 | Site returns 503/504 | Check regional logs, failure-drill state, concurrency/throttles, cold starts and timeout settings |
 | CloudFront update is still deploying | Wait for propagation; do not start another concurrent deployment |
@@ -234,7 +245,23 @@ Do not assume a deleted CloudFormation stack means all charges have stopped.
 The implementation has passed local production builds, strict TypeScript checks, Vitest,
 CloudFormation lint, browser GET/POST server-function checks, and a `linux/amd64` container
 build with healthy/failure/missing-secret HTTP checks on a read-only filesystem.
-**An AWS deployment and real regional failover have not been validated during implementation.**
+On **2026-09-26**, a live CloudFormation deployment in `us-east-1` and `us-west-2`
+passed the following checks:
+
+- Both Lambdas ran the same digest-pinned container image.
+- CloudFront served SSR and GET/POST server functions from either preferred region.
+- Independently failing each region returned GET/HEAD/OPTIONS from the other region.
+- POST/PUT/PATCH/DELETE returned 503 from the failed preferred region, with no replay.
+- Direct dynamic origin requests without the shared secret returned 403; readiness stayed healthy.
+- Spoofed forwarding/origin headers were ignored; cross-site server-function POST was rejected.
+- Both regions were restored to `SimulateFailure=false`; all five stacks were complete.
+- 49 Vitest tests, strict typing, production build/smoke, and CloudFormation lint passed.
+
+The initial image push required a host-side ECR upload workaround for Docker Desktop
+proxy failures; the repository deploy script still uses standard `docker push`.
+Live server functions were checked over HTTP. The browser connection was unavailable
+for the final AWS UI pass, so live browser interaction was **not** revalidated.
+These are HTTP-level simulated failures, not a test of an actual AWS regional outage.
 Run the live verification and both-direction drill in your own sandbox before relying on it.
 
 [Back to README](../README.md) · [Local development](getting-started.md)

@@ -96,24 +96,3 @@ describe('active/active origin selection', () => {
     expect(() => routeRequest(event(request(), 'origin-response'), config)).toThrow('Unsupported event type')
   })
 })
-
-describe('viewer header sanitation', () => {
-  it('replaces forwarded headers and removes viewer-supplied origin credentials', () => {
-    const input = request()
-    input.headers['x-forwarded-host'] = [{ value: 'attacker.test' }]
-    input.headers['x-origin-slot'] = [{ value: 'secondary' }]
-    input.headers['x-origin-verify'] = [{ value: 'forged' }]
-    const result = routeRequest(event(input, 'viewer-request'), config)
-    expect(result.headers['x-forwarded-host']).toEqual([{ key: 'X-Forwarded-Host', value: 'example.cloudfront.net' }])
-    expect(result.headers).not.toHaveProperty('x-forwarded-proto')
-    expect(result.headers).not.toHaveProperty('x-origin-slot')
-    expect(result.headers).not.toHaveProperty('x-origin-verify')
-    expect(result.headers.cookie).toEqual([{ key: 'Cookie', value: 'session=example' }])
-  })
-
-  it('rejects viewer requests without a Host header', () => {
-    const input = request()
-    delete input.headers.host
-    expect(() => routeRequest(event(input, 'viewer-request'), config)).toThrow('Missing viewer Host')
-  })
-})

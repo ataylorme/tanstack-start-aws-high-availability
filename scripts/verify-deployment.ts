@@ -24,4 +24,18 @@ for (const preferred of ['us-east-1', 'us-west-2'] as const) {
     }
     console.log(`${preferred} preference ${path} -> ${expected}: OK`)
   }
+  for (const method of ['HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+    const isRead = method === 'HEAD' || method === 'OPTIONS'
+    const expectedStatus = !isRead && failedRegion === preferred ? 503 : 200
+    const expectedRegion = isRead ? expected : preferred
+    // /healthz has no side effects; never exercise real writes during a drill.
+    const response = await fetch(new URL('/healthz', base), {
+      method, headers: { 'x-ha-region': preferred }, signal: AbortSignal.timeout(60000),
+    })
+    assert.equal(response.status, expectedStatus, `${preferred} ${method} /healthz`)
+    assert.equal(response.headers.get('x-served-by-region'), expectedRegion)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    await response.arrayBuffer()
+    console.log(`${preferred} preference ${method} /healthz -> ${expectedRegion} (${expectedStatus}): OK`)
+  }
 }

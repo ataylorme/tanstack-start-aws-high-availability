@@ -1,3 +1,4 @@
+import { viewerCode } from './viewer-code.ts'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -118,6 +119,7 @@ const bucket = output('us-east-1', `${prefix}-bootstrap`, 'ArtifactBucket')
 aws('us-east-1', ['s3', 'cp', zipFile, `s3://${bucket}/${key}`])
 deploy('us-east-1', `${prefix}-global`, 'infra/global.yaml', {
   EastDomain: eastDomain, WestDomain: westDomain, OriginSecret: secret,
+  ViewerFunctionCode: viewerCode(),
   ArtifactBucket: bucket, EdgeCodeKey: key, EdgeCodeSha256: hash.toString('base64'),
 })
 const distribution = output('us-east-1', `${prefix}-global`, 'DistributionId')
