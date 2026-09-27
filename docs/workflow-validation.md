@@ -10,8 +10,8 @@ Validated on **2026-09-26** against upstream
 ## Deployment
 
 - Branch: `test/tanstack-workflow-aws`.
-- Former lab URL (deleted): `https://d20xnhi2h10j2b.cloudfront.net`.
-- AWS account: `963564733329`; isolated stack prefix: `tanstack-wf-test`.
+- Former lab URL and AWS account ID are omitted from public evidence.
+- Isolated stack prefix: `tanstack-wf-test`.
 - All nine CloudFormation stacks reached `CREATE_COMPLETE`; CloudFront deployed.
 - DynamoDB MRSC: `ACTIVE`, `STRONG`, replicas in Northern Virginia/Oregon and an active Ohio witness.
 - Application release: `ee9fbc6-1790459916687`. Subsequent changes before validation concerned scripts, tests and documentation, not deployed application code.
@@ -49,7 +49,7 @@ flowchart LR
 | Oregon start, Virginia signal | `test-5b666b16-58c7-49af-96cf-105a3369edf9` | 14 |
 | Concurrent duplicates and rejection | `test-08b670aa-cb6c-41be-bd0d-93b4d6cec397` | 8 |
 
-Machine-readable workflow results are in [workflow-validation.json](workflow-validation.json).
+Machine-readable workflow results are in [workflow-validation.json](workflow-validation.json). Site URLs in the linked evidence reports use a reserved `.invalid` placeholder rather than a deployment hostname.
 
 ## Scheduled-worker recovery
 
@@ -73,4 +73,4 @@ A transient ECR upload connection failure was recovered with smaller upload part
 
 No upstream runtime defect was observed in these bounded scenarios. This is not production certification, load testing, a real AWS regional outage, or a quorum-loss experiment. Browser interactions were not automated; HTTP/API behavior and rendered markup were checked. Test runs intentionally contain no sensitive application data.
 
-The existing main deployment remained healthy at release `a603cab-update`; its resources were not updated. The isolated lab and main deployment were later torn down at the owner's request. The API token remains in the owner-only local file `.deploy/963564733329-tanstack-wf-test/workflow-test-token`, not in this repository. See [workflow-testing.md](workflow-testing.md) for use, repeatable validation and teardown.
+The existing main deployment remained healthy at release `a603cab-update`; its resources were not updated. The isolated lab and main deployment were later torn down at the owner's request. The API token remains in the owner-only local file `.deploy/<account-id>-<stack-prefix>/workflow-test-token`, not in this repository. See [workflow-testing.md](workflow-testing.md) for use, repeatable validation and teardown.
