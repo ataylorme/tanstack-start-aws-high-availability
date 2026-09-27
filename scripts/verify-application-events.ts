@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { randomUUID, createHash } from 'node:crypto'
+import { verifyWorkflowPackage } from './workflow-package.ts'
+import { randomUUID } from 'node:crypto'
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
@@ -7,9 +8,7 @@ if (!process.argv.includes('--execute')) {
   console.log('Plan only: authenticated application HTTP publication in both AWS Regions, stable-ID retry/conflict checks, and full-envelope stream-to-SQS delivery. Requires HTTPS site, WORKFLOW_TEST_TOKEN_FILE and EVENT_TEST_QUEUE_URL for a dedicated queue. Retains event items; deletes only matching test messages.')
   process.exit(0)
 }
-const artifact = JSON.parse(readFileSync('vendor/application-events-candidate.json', 'utf8'))
-const hash = createHash('sha256').update(readFileSync(`vendor/${artifact.tarball}`)).digest('hex')
-assert.equal(hash, artifact.sha256, 'Candidate artifact checksum changed')
+const artifact = verifyWorkflowPackage()
 const deployedReleases = new Set<string>()
 const site = new URL(process.argv[2] ?? '')
 assert.equal(site.protocol, 'https:')

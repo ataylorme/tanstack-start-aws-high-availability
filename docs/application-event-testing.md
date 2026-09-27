@@ -1,20 +1,29 @@
 # PR #4 application-event integration lab
 
-Branch: `test/tanstack-workflow-aws-application-events`, based on
-`origin/test/tanstack-workflow-aws`. This lab is separate from workflow replay events.
+Branch: `test/tanstack-workflow-aws`. The application-event integration was merged
+into this branch. This lab is separate from workflow replay events.
 
-## Candidate and reproducibility
+## Published package and reproducibility
 
-The checked-in `vendor/application-events-candidate.json` records upstream PR #4's
-exact commit, version and tarball SHA-256. The package and lockfile use that local
-artifact, not a moving branch or an unpublished registry version. Both the app
-image and native consumer resolve the same installed artifact. Docker copies
-`vendor/` before `npm ci`. The sole added optional bridge SDK is pinned SQS.
+This branch pins **`@ataylorme/tanstack-workflow-aws@0.2.0-rc.0`** from GitHub
+Packages, not a local tarball or moving branch. `package-lock.json` fixes the registry
+artifact and SHA-512 integrity. `src/events/package-provenance.json` records the
+upstream PR #4 source commit, registry URL, and package checksums. Both the app image
+and native consumer resolve the same installed release.
 
-To reproduce the artifact, check out the recorded upstream commit, use Node 24 / npm
-11, run `npm ci`, `npm run typecheck`, `npm run build`, then `npm pack`. Compare its
-checksum to the manifest before replacing anything. The upstream MIT license is
-preserved in the tarball and `third-party/tanstack-workflow-aws-LICENSE`.
+`npm ci` verifies downloaded package integrity. Live verification scripts check
+that the manifest, lockfile, installed version, and provenance agree before AWS calls.
+Docker uses the existing GitHub Packages BuildKit secret; it no longer copies a
+vendored package. Follow the workflow runbook's package authentication instructions.
+
+The published tarball is byte-for-byte identical to the candidate previously tested
+on AWS. The upstream MIT license remains in the installed package and
+`third-party/tanstack-workflow-aws-LICENSE`.
+
+**Registry caveat:** this prerelease's default GitHub Packages installation also
+installs the EventBridge and SNS SDK peers, despite optional-peer flags in the
+package itself. SQS is the only bridge SDK explicitly selected by this application;
+the lockfile captures the additional registry-resolved dependencies.
 
 ## Architecture and boundaries
 

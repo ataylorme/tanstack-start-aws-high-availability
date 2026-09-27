@@ -1,6 +1,6 @@
+import { verifyWorkflowPackage } from '../scripts/workflow-package'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
 const template = readFileSync('infra/application-events.yaml', 'utf8')
@@ -54,32 +54,21 @@ describe('application-event verification and candidate packaging', () => {
     expect(output).toContain('stream-to-SQS delivery')
     expect(output).toContain('deletes only matching test messages')
   })
-  it('pins the PR4 candidate and verifies both manifest and npm integrity hashes', () => {
-    const manifest = JSON.parse(readFileSync('vendor/application-events-candidate.json', 'utf8'))
-    const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
-    const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
+  it('pins the published release and verifies installed/lockfile provenance', () => {
+    const manifest = verifyWorkflowPackage()
     expect(manifest.repository).toBe('https://github.com/ataylorme/tanstack-workflow-aws')
     expect(manifest.pullRequest).toBe(4)
     expect(manifest.commit).toMatch(/^[a-f0-9]{40}$/)
-    expect(manifest.tarball).toMatch(/^[a-zA-Z0-9.-]+\.tgz$/)
-    const bytes = readFileSync(`vendor/${manifest.tarball}`)
-    expect(createHash('sha256').update(bytes).digest('hex')).toBe(manifest.sha256)
-    const dependency = '@ataylorme/tanstack-workflow-aws'
-    const specifier = `file:vendor/${manifest.tarball}`
-    expect(pkg.dependencies[dependency]).toBe(specifier)
-    expect(lock.packages[''].dependencies[dependency]).toBe(specifier)
-    expect(lock.packages[`node_modules/${dependency}`].resolved).toBe(specifier)
-    expect(lock.packages[`node_modules/${dependency}`].version).toBe(manifest.version)
-    expect(lock.packages[`node_modules/${dependency}`].integrity).toBe(`sha512-${createHash('sha512').update(bytes).digest('base64')}`)
+    expect(manifest.version).toBe('0.2.0-rc.0')
+    expect(manifest.registry).toBe('https://npm.pkg.github.com')
+    expect(manifest.sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(manifest.integrity).toMatch(/^sha512-/)
   })
-  it('makes vendored candidate available before Docker npm ci', () => {
+  it('installs the registry package in Docker using a secret, not a vendored tarball', () => {
     const dockerfile = readFileSync('Dockerfile', 'utf8')
-    const copy = dockerfile.indexOf('COPY vendor/ ./vendor/')
-    expect(copy).toBeGreaterThan(-1)
-    expect(copy).toBeLessThan(dockerfile.indexOf('npm ci'))
-    const ignored = readFileSync('.dockerignore', 'utf8').split('\n').map(line => line.trim())
-    expect(ignored).not.toContain('vendor')
-    expect(ignored).not.toContain('vendor/')
-    expect(ignored).not.toContain('*.tgz')
+    expect(dockerfile).not.toContain('COPY vendor/')
+    expect(dockerfile).toContain('COPY package.json package-lock.json .npmrc ./')
+    expect(dockerfile).toContain('type=secret,id=node_auth_token,env=NODE_AUTH_TOKEN,required=true npm ci')
+    expect(readFileSync('package.json', 'utf8')).not.toContain('file:vendor/')
   })
 })

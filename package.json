@@ -20,7 +20,7 @@
     "build:events": "esbuild src/events/consumer.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/events/handler.js"
   },
   "dependencies": {
-    "@ataylorme/tanstack-workflow-aws": "file:vendor/ataylorme-tanstack-workflow-aws-0.2.0-rc.0.tgz",
+    "@ataylorme/tanstack-workflow-aws": "0.2.0-rc.0",
     "@aws-sdk/client-sqs": "3.1141.0",
     "@tanstack/react-router": "1.170.38",
     "@tanstack/react-start": "1.168.56",

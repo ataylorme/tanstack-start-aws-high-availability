@@ -3,7 +3,6 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
-COPY vendor/ ./vendor/
 RUN --mount=type=secret,id=node_auth_token,env=NODE_AUTH_TOKEN,required=true npm ci
 COPY . .
 RUN npm run build

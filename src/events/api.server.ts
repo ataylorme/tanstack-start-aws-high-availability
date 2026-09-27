@@ -1,5 +1,5 @@
 import { ApplicationEventConflictError, createDynamoApplicationEventPublisher, type ApplicationEventPublisher } from '@ataylorme/tanstack-workflow-aws/events'
-import candidate from '../../vendor/application-events-candidate.json'
+import candidate from './package-provenance.json'
 import { authorized, validRunId } from '../workflows/api.server'
 
 export function parseEvent(value: unknown) {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { verifyWorkflowPackage } from './workflow-package.ts'
 import { execFileSync } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -14,8 +15,7 @@ if (!process.argv.includes('--execute')) {
   console.log(`Plan only (no AWS calls made): ${prefix} east-only malformed APPLICATION_EVENT INSERT, good-event SQS delivery, bounded 3-minute S3 failure archive inspection, and private Lambda replay of a corrected archived record with the same ID. This is corrected-malformed-record replay, NOT destination-outage replay. Retains table items and archive objects; deletes only matching SQS messages. --execute creates test data and invokes billable resources.`)
   process.exit(0)
 }
-const artifact = JSON.parse(readFileSync('vendor/application-events-candidate.json', 'utf8'))
-assert.equal(createHash('sha256').update(readFileSync(`vendor/${artifact.tarball}`)).digest('hex'), artifact.sha256)
+const artifact = verifyWorkflowPackage()
 const region = 'us-east-1'
 const tableName = `${prefix}-workflow`
 const runId = `test-recovery-${randomUUID()}`

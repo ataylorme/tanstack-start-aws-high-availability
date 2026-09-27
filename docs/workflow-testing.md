@@ -1,6 +1,6 @@
 # Workflow integration test branch
 
-This branch tests the published **`@ataylorme/tanstack-workflow-aws@0.1.0`** package from GitHub Packages, pinned exactly in `package.json` and the lockfile.
+This branch tests the published **`@ataylorme/tanstack-workflow-aws@0.2.0-rc.0`** package from GitHub Packages, pinned exactly in `package.json` and the lockfile.
 It imports the store and its matching bundled workflow/runtime snapshot—not an
 independently versioned TanStack Workflow engine. Upstream is experimental.
 The infrastructure is adapted from its MIT-licensed examples; see
@@ -39,14 +39,14 @@ seconds. The two definitions are shared by the web app and native sweepers:
 
 ## Package authentication
 
-Version 0.1.0 is published on **GitHub Packages**, not npmjs.org. The checked-in `.npmrc`
+Version 0.2.0-rc.0 is published on **GitHub Packages**, not npmjs.org. The checked-in `.npmrc`
 routes only `@ataylorme` packages there and reads authentication from `NODE_AUTH_TOKEN`.
 Set that environment variable securely to a GitHub token with `read:packages` and package
 access. For an already-authorized GitHub CLI session with that scope:
 
 ```sh
 export NODE_AUTH_TOKEN="$(gh auth token)"
-npm install --save-exact @ataylorme/tanstack-workflow-aws@0.1.0
+npm install --save-exact @ataylorme/tanstack-workflow-aws@0.2.0-rc.0
 ```
 
 Never commit the token. If your npm configuration enforces a minimum release age, a newly
@@ -159,6 +159,6 @@ table or stop its storage charges. The main `tanstack-ha` deployment is separate
 
 ## Application events candidate
 
-For PR #4 event testing on the application-events branch, see
-[application-event-testing.md](application-event-testing.md). That branch replaces
-the 0.1.0 registry dependency with its reviewed, checksum-recorded candidate tarball.
+For PR #4 event testing merged into this branch, see
+[application-event-testing.md](application-event-testing.md). The application and
+consumer now use the exact published `0.2.0-rc.0` release with lockfile integrity.

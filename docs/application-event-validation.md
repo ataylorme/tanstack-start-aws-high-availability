@@ -1,7 +1,7 @@
 # Application-event validation status
 
 Candidate: upstream PR #4, commit `5f2e2b9416049b8173c8d29b8b153dec9a5026ad`.
-See `vendor/application-events-candidate.json` for the exact tarball checksum.
+See `src/events/package-provenance.json` for the published package source and checksums.
 
 - Local application build, edge/sweeper/consumer bundles, typecheck, 129 tests: passed.
 - Production-server healthy/failure smoke: passed.
@@ -71,3 +71,18 @@ checks is not blanket approval of PR #4 or proof of production outbox/idempotenc
   token; no browser runtime errors were observed.
 - Detailed browser results and screenshots remain private under `.deploy/ui-check/`.
   Public summaries omit deployment-specific URLs, ARNs, IDs, and credentials.
+
+## Published registry dependency
+
+The branch now installs exact version `0.2.0-rc.0` from GitHub Packages instead of
+the checked-in tarball. The downloaded registry tarball matches both the lockfile's
+SHA-512 integrity and the original AWS-tested candidate's SHA-256 byte-for-byte.
+This is artifact-equivalence evidence, not a claim of a fresh AWS redeployment.
+The vendored binary was removed; live runners verify installed/lockfile provenance.
+The registry's automatic installation of optional bridge peers remains documented
+in the testing runbook and upstream prerelease notes.
+
+Registry-switch verification passed: clean `npm ci`, all 135 tests (including
+provenance-drift rejection), builds, typecheck, CloudFormation lint, production
+server smoke, and a fresh registry-backed Docker image/container smoke. No new
+AWS deployment was performed for this dependency-source change.

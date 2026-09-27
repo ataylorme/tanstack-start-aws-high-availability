@@ -10,7 +10,8 @@ Infrastructure is plain **CloudFormation**, not CDK, SAM, or Terraform.
 
 ## Application events test branch
 
-This branch pins [tanstack-workflow-aws PR #4](https://github.com/ataylorme/tanstack-workflow-aws/pull/4)
+This branch pins published `@ataylorme/tanstack-workflow-aws@0.2.0-rc.0` from
+GitHub Packages ([upstream PR #4](https://github.com/ataylorme/tanstack-workflow-aws/pull/4))
 and adds a browser application-event lab with authenticated publishing, cross-region
 retry/conflict checks, and real DynamoDB Stream-to-SQS delivery observation.
 See the [event testing runbook](docs/application-event-testing.md) and

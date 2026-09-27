@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyWorkflowPackage } from './workflow-package.ts'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout } from 'node:timers/promises'
@@ -7,6 +8,7 @@ if (!process.argv.includes('--execute')) {
   console.log('Plan only: validate token protection, cross-region workflow signals/approvals, retries, duplicate submissions, and EventBridge timer recovery. Pass HTTPS site and --execute. Uses WORKFLOW_TEST_TOKEN_FILE; creates bounded test runs, never deletes data.')
   process.exit(0)
 }
+const upstreamPackage = `@ataylorme/tanstack-workflow-aws@${verifyWorkflowPackage().version}`
 const site = new URL(process.argv[2] ?? '')
 assert.equal(site.protocol, 'https:')
 const tokenFile = process.env.WORKFLOW_TEST_TOKEN_FILE
@@ -113,6 +115,6 @@ await scenario('concurrent duplicate start/signal and rejection', async () => {
 })
 mkdirSync('.deploy', { recursive: true })
 const report = `.deploy/workflow-validation-${Date.now()}.json`
-writeFileSync(report, JSON.stringify({ site: site.origin, testedAt: new Date().toISOString(), upstreamPackage: '@ataylorme/tanstack-workflow-aws@0.1.0', attemptedRuns, results }, null, 2))
+writeFileSync(report, JSON.stringify({ site: site.origin, testedAt: new Date().toISOString(), upstreamPackage, attemptedRuns, results }, null, 2))
 console.log(`Evidence: ${report}`)
 assert.ok(results.every(result => result.ok), 'Workflow validation failures; inspect the evidence report')

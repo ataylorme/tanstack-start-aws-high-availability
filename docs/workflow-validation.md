@@ -1,7 +1,7 @@
 # Workflow AWS validation evidence
 
 > Historical AWS evidence: both deployments and their artifacts were subsequently torn down.
-> The branch now installs the published GitHub Packages release `@ataylorme/tanstack-workflow-aws@0.1.0`.
+> The branch now installs the published GitHub Packages prerelease `@ataylorme/tanstack-workflow-aws@0.2.0-rc.0`.
 > The AWS results below concern the earlier Git-pinned dependency, not a new deployment of the published tarball.
 
 Validated on **2026-09-26** against upstream
