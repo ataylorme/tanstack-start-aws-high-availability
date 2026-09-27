@@ -156,3 +156,9 @@ last. Delete the workflow-deployer role stack only after table operations finish
 never performs them. Retained ECR/S3/logs/edge resources and the MRSC table require explicit
 cleanup after recording any evidence. A deleted table stack does not delete the retained
 table or stop its storage charges. The main `tanstack-ha` deployment is separate.
+
+## Application events candidate
+
+For PR #4 event testing on the application-events branch, see
+[application-event-testing.md](application-event-testing.md). That branch replaces
+the 0.1.0 registry dependency with its reviewed, checksum-recorded candidate tarball.

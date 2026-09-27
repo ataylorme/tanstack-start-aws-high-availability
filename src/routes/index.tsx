@@ -1,6 +1,7 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
+import { ApplicationEventLab } from '../components/ApplicationEventLab'
 import { WorkflowLab } from '../components/WorkflowLab'
 import { regionInfo } from '../lib/origin'
 
@@ -44,11 +45,12 @@ function Home() {
     </nav>
     <section className="details"><h2>Active / active, with honest boundaries</h2>
       <p>Client-IP affinity distributes clients between both regions. If a read fails, CloudFront attempts the other region. Dynamic responses are not cached.</p>
-      <p>GET, HEAD, and OPTIONS can fail over. POST and other writes are never automatically replayed. This stateless demo has no shared database or session store.</p>
+      <p>GET, HEAD, and OPTIONS can fail over. POST and other writes are never automatically replayed. The integration labs below use a shared MRSC test table; the origin router itself is stateless.</p>
       <button disabled={busy} onClick={() => void invokeWrite()}>{busy ? 'Invoking…' : 'Test POST server function'}</button>
       <p role="status">{writeResult}</p>
       <a href="/healthz">Inspect this origin’s health response →</a>
     </section>
+    <ApplicationEventLab />
     <WorkflowLab />
   </main>
 }
