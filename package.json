@@ -12,14 +12,16 @@
     "start": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit && tsc -p edge/tsconfig.json --noEmit",
     "test": "vitest run",
-    "check": "npm run build && npm run build:edge && npm run build:sweeper && npm run typecheck && npm test",
+    "check": "npm run build && npm run build:edge && npm run build:sweeper && npm run build:events && npm run typecheck && npm test",
     "smoke": "node scripts/smoke.ts",
     "build:edge": "tsc -p edge/tsconfig.json",
     "test:watch": "vitest",
-    "build:sweeper": "esbuild src/workflows/sweeper.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/sweeper/sweeper.js"
+    "build:sweeper": "esbuild src/workflows/sweeper.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/sweeper/sweeper.js",
+    "build:events": "esbuild src/events/consumer.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/events/handler.js"
   },
   "dependencies": {
-    "@ataylorme/tanstack-workflow-aws": "0.1.0",
+    "@ataylorme/tanstack-workflow-aws": "file:vendor/ataylorme-tanstack-workflow-aws-0.2.0-rc.0.tgz",
+    "@aws-sdk/client-sqs": "3.1141.0",
     "@tanstack/react-router": "1.170.38",
     "@tanstack/react-start": "1.168.56",
     "nitro": "3.0.260903-beta",

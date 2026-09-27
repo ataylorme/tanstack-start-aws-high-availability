@@ -23,6 +23,14 @@ Parameters:
     Default: ''
     NoEcho: true
     Description: Authentication token for the optional workflow validation endpoints
+  EventTestQueueUrl:
+    Type: String
+    Default: ''
+    Description: Optional private application-event test queue URL in us-east-1
+  EventTestQueueArn:
+    Type: String
+    Default: ''
+    Description: Optional private application-event test queue ARN
   SimulateFailure:
     Type: String
     Default: 'false'
@@ -30,6 +38,9 @@ Parameters:
     Description: Demo-only failure drill; dynamic requests return 503, readiness stays healthy
 Conditions:
   HasWorkflowTable: !Not [!Equals [!Ref WorkflowTableName, '']]
+  HasEventTestQueue: !And
+    - !Not [!Equals [!Ref EventTestQueueUrl, '']]
+    - !Not [!Equals [!Ref EventTestQueueArn, '']]
 Resources:
   ExecutionRole:
     Type: AWS::IAM::Role
@@ -67,6 +78,16 @@ Resources:
                     - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${WorkflowTableName}'
                     - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${WorkflowTableName}/index/DueIndex'
           - !Ref AWS::NoValue
+        - !If
+          - HasEventTestQueue
+          - PolicyName: EventDeliveryObservation
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: sqs:ReceiveMessage
+                  Resource: !Ref EventTestQueueArn
+          - !Ref AWS::NoValue
   LogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
@@ -96,6 +117,7 @@ Resources:
           ORIGIN_SECRET: !Ref OriginSecret
           RELEASE_ID: !Ref ReleaseId
           SIMULATE_FAILURE: !Ref SimulateFailure
+          EVENT_TEST_QUEUE_URL: !If [HasEventTestQueue, !Ref EventTestQueueUrl, !Ref AWS::NoValue]
           TABLE_NAME: !If [HasWorkflowTable, !Ref WorkflowTableName, !Ref AWS::NoValue]
           WORKFLOW_TEST_TOKEN: !If [HasWorkflowTable, !Ref WorkflowTestToken, !Ref AWS::NoValue]
   FunctionUrl:

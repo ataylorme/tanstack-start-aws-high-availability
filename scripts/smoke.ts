@@ -35,6 +35,8 @@ async function smoke(failed: boolean): Promise<void> {
     if (!failed) {
       const html = await page.text()
       assert.match(html, /Two regions/)
+      assert.match(html, /Application event lab/)
+      assert.match(html, /Check SQS delivery/)
       assert.match(html, /us-east-1/)
       const asset = html.match(/(?:src|href)="([^" ]+\/assets\/[^" ]+|\/assets\/[^" ]+)"/)?.[1]
       assert.ok(asset, 'SSR page should reference a built client asset')

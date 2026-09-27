@@ -8,6 +8,14 @@ Infrastructure is plain **CloudFormation**, not CDK, SAM, or Terraform.
 > AWS active/active routing and both-direction HTTP failover were verified on 2026-09-26.
 > Re-run verification for your deployment. CloudFront **does not automatically retry writes**.
 
+## Application events test branch
+
+This branch pins [tanstack-workflow-aws PR #4](https://github.com/ataylorme/tanstack-workflow-aws/pull/4)
+and adds a browser application-event lab with authenticated publishing, cross-region
+retry/conflict checks, and real DynamoDB Stream-to-SQS delivery observation.
+See the [event testing runbook](docs/application-event-testing.md) and
+[validation status](docs/application-event-validation.md).
+
 ## Workflow testing branch
 
 This branch adds an isolated, token-protected TanStack Workflow AWS integration lab.

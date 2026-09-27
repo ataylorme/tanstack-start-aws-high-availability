@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Isolated PR4 application-event SQS bridge. Deploy once in us-east-1 only.
+Parameters:
+  StreamArn:
+    Type: String
+    AllowedPattern: 'arn:aws[a-z-]*:dynamodb:[a-z0-9-]+:[0-9]{12}:table/.+/stream/.+'
+    Description: Regional DynamoDB Stream ARN, not the table ARN
+  CodeBucket: { Type: String, Description: Regional S3 bucket containing the bundled bridge Lambda ZIP }
+  CodeKey: { Type: String, Description: Immutable content-addressed ZIP key containing handler.js }
+Resources:
+  DestinationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 86400
+      VisibilityTimeout: 60
+  FailureArchive:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTestFailures
+            Status: Enabled
+            ExpirationInDays: 30
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties: { RetentionInDays: 14 }
+  BridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StreamAndDestination
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt LogGroup.Arn
+              - Effect: Allow
+                Action: [dynamodb:DescribeStream, dynamodb:GetRecords, dynamodb:GetShardIterator, dynamodb:ListStreams]
+                Resource: !Ref StreamArn
+              - Effect: Allow
+                Action: [s3:PutObject, s3:ListBucket]
+                Resource: [!GetAtt FailureArchive.Arn, !Sub '${FailureArchive.Arn}/*']
+                Condition:
+                  StringEquals: { 's3:ResourceAccount': !Ref 'AWS::AccountId' }
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt DestinationQueue.Arn
+  BridgeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs22.x
+      Handler: handler.handler
+      Role: !GetAtt BridgeRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      LoggingConfig: { LogGroup: !Ref LogGroup }
+      Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref CodeKey }
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref DestinationQueue
+  StreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !Ref StreamArn
+      FunctionName: !Ref BridgeFunction
+      StartingPosition: TRIM_HORIZON
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      BisectBatchOnFunctionError: true
+      MaximumRetryAttempts: 5
+      MaximumRecordAgeInSeconds: 3600
+      DestinationConfig:
+        OnFailure: { Destination: !GetAtt FailureArchive.Arn }
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"entityType":{"S":["APPLICATION_EVENT"]}}}}'
+  DeliveryFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '"application_event_delivery_failed"'
+      MetricTransformations:
+        - MetricNamespace: ApplicationEventBridges
+          MetricName: !Sub '${AWS::StackName}-DeliveryFailures'
+          MetricValue: '1'
+          DefaultValue: 0
+  DeliveryFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Stream record failures including partial batch failures; inspect retained logs and S3 archive
+      Namespace: ApplicationEventBridges
+      MetricName: !Sub '${AWS::StackName}-DeliveryFailures'
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+  IteratorAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/Lambda
+      MetricName: IteratorAge
+      Dimensions: [{ Name: FunctionName, Value: !Ref BridgeFunction }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 60000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  RuntimeErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref BridgeFunction }]
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+  ArchiveFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/Lambda
+      MetricName: DestinationDeliveryFailures
+      Dimensions: [{ Name: FunctionName, Value: !Ref BridgeFunction }]
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+Outputs:
+  QueueUrl: { Value: !Ref DestinationQueue }
+  QueueArn: { Value: !GetAtt DestinationQueue.Arn }
+  FunctionArn: { Value: !GetAtt BridgeFunction.Arn }
+  StreamMappingId: { Value: !Ref StreamMapping }
+  FailureBucketName: { Value: !Ref FailureArchive }
+  LogGroupName: { Value: !Ref LogGroup }
