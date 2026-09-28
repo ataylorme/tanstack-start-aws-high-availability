@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Isolated PR4 application-event SQS bridge. Deploy once in us-east-1 only.
+Description: Isolated PR4 application-event stream-to-SQS bridge; separate from workflow wakeups. Deploy once in us-east-1 only.
 Parameters:
   StreamArn:
     Type: String

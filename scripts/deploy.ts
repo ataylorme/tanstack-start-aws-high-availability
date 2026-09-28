@@ -159,14 +159,29 @@ for (const region of regions) {
 if (workflow) {
   const sweeperZip = resolve(work, 'workflow-sweeper.zip')
   rmSync(sweeperZip, { force: true })
-  run('zip', ['-j', '-X', sweeperZip, 'dist/sweeper/sweeper.js'])
+  run('zip', ['-j', '-X', sweeperZip, 'dist/sweeper/sweeper.js', 'dist/sweeper/dispatcher.js'])
   const sweeperHash = createHash('sha256').update(readFileSync(sweeperZip)).digest('hex')
   const sweeperKey = `workflow-sweeper/${sweeperHash}.zip`
   for (const region of regions) {
     const localBucket = output(region, `${prefix}-bootstrap`, 'ArtifactBucket')
     aws(region, ['s3', 'cp', sweeperZip, `s3://${localBucket}/${sweeperKey}`])
+    const streamArn = aws(region, ['dynamodb', 'describe-table', '--table-name', workflowTable,
+      '--query', 'Table.LatestStreamArn', '--output', 'text'])
+    if (!streamArn.includes(`:dynamodb:${region}:`)) throw new Error('Missing regional workflow stream')
+    const stacks: string[] = JSON.parse(aws(region, ['cloudformation', 'list-stacks',
+      '--query', "StackSummaries[?StackStatus!='DELETE_COMPLETE'].StackName", '--output', 'json']))
+    // Ordinary app deployments must not accidentally cut over an existing legacy
+    // stack before reconciliation. Dedicated deployment performs that migration.
+    let legacy = 'removed'
+    if (stacks.includes(`${prefix}-sweeper`)) {
+      legacy = aws(region, ['cloudformation', 'describe-stacks', '--stack-name', `${prefix}-sweeper`,
+        '--query', "Stacks[0].Parameters[?ParameterKey=='LegacyScheduleMode'].ParameterValue | [0]", '--output', 'text'])
+      if (legacy === 'None') legacy = 'enabled'
+      if (!['enabled', 'disabled', 'removed'].includes(legacy)) throw new Error('Unexpected legacy schedule mode')
+    }
     deploy(region, `${prefix}-sweeper`, 'infra/workflow-sweeper.yaml', {
       TableName: workflowTable, CodeBucket: localBucket, CodeKey: sweeperKey,
+      StreamArn: streamArn, LegacyScheduleMode: legacy,
     })
   }
 }

@@ -29,7 +29,7 @@ export function WorkflowLab() {
   }
   return <section className="details workflow-lab" aria-label="Workflow integration lab">
     <h2>TanStack Workflow AWS integration lab</h2>
-    <p>Experimental, token-protected test environment. Start → signal → inspect → approve → wait for the scheduled sweeper → inspect. Change the request region between steps to test shared durable state.</p>
+    <p>Experimental, token-protected test environment. Start → signal → inspect → approve → wait for the demand-driven wakeup → inspect. Change the request region between steps to test shared durable state.</p>
     <label>Test token <input type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} /></label>
     <label>Run ID <input value={runId} placeholder="Generated on first request" onChange={event => setRunId(event.target.value)} /></label>
     <label>Request region <select value={region} onChange={event => {
@@ -45,6 +45,6 @@ export function WorkflowLab() {
       <button disabled={busy} onClick={() => { setRunId(''); setApprovalId(''); setResult('Ready for a new run.') }}>New run</button>
     </div>
     <pre role="status">{result}</pre>
-    <p>The token stays in memory only. Runs contain test data, not business side effects. Timers may take multiple one-minute sweeps to complete.</p>
+    <p>The token stays in memory only. Runs contain test data, not business side effects. Timers use on-demand wakeups with minute-level precision.</p>
   </section>
 }

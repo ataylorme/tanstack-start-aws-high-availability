@@ -18,8 +18,8 @@ flowchart TB
     eastDB <--> westDB
     witness["MRSC witness<br/>us-east-2"] --- eastDB
     witness --- westDB
-    eastEvents["EventBridge: every minute"] --> eastSweep["Private native sweep Lambda"] --> eastDB
-    westEvents["EventBridge: every minute"] --> westSweep["Private native sweep Lambda"] --> westDB
+    eastDB --> eastDispatch["Stream dispatcher"] --> eastTimer["One-time Scheduler / immediate SQS"] --> eastSweep["Private native sweep Lambda"] --> eastDB
+    westDB --> westDispatch["Stream dispatcher"] --> westTimer["One-time Scheduler / immediate SQS"] --> westSweep["Private native sweep Lambda"] --> westDB
 ```
 
 The recommended test prefix is `tanstack-wf-test`. It creates **nine stacks**: bootstrap,
@@ -30,12 +30,14 @@ The table stack uses a dedicated CloudFormation service role for asynchronous re
 No Aurora DSQL, business database, email, payment, or other external side effect is added.
 
 Every runtime call uses a fresh owner in both `withLeaseOwner` and `leaseOwner`.
-HTTP execution is bounded to five seconds, sweeps to Lambda's remaining time minus two
-seconds. The two definitions are shared by the web app and native sweepers:
+HTTP execution is bounded to five seconds, sweeps to Lambda's remaining time minus fifteen
+seconds (reserved for durable successor delivery). The two definitions are shared by the web app and native sweepers:
 
 - `validation-v1`: durable region-recording step; deliberate first-attempt failure and
   retry; signal; approval (including rejection); two durable sleeps; final region.
 - `timer-v1`: two sleeps and region-recording steps, useful for isolated sweeper recovery.
+
+See [demand-driven wakeup deployment and recovery](workflow-wakeups.md) for migration, idle validation, and rollback. New stacks have no recurring rules; existing legacy stacks require the staged cutover.
 
 ## Package authentication
 
@@ -68,7 +70,7 @@ First configure [package authentication](#package-authentication).
 npm ci
 npm run check
 npm run smoke
-export AWS_PROFILE=ataylorme
+export AWS_PROFILE=your-sandbox-profile
 aws sts get-caller-identity  # verify the intended account, not root
 export STACK_PREFIX=tanstack-wf-test
 export ENABLE_WORKFLOW_TESTS=true
@@ -95,7 +97,7 @@ Get `SiteUrl` from the test global stack. The main page contains a workflow lab.
 workflow test token from the protected local `workflow-test-token` file; it stays only in
 component memory. It is not in URLs, localStorage, Git, or public frontend assets. Use the
 request-region selector to start east, signal west, inspect the approval ID, approve east,
-then inspect after the scheduled sweepers finish. Use **New run** between definitions.
+then inspect after demand-driven wakeups finish. Use **New run** between definitions.
 A full page reload clears the token and run ID; retain the run ID if you want to inspect later.
 
 API calls to `/api/workflows` require `Authorization: Bearer <test-token>` in addition to
@@ -113,7 +115,7 @@ export WORKFLOW_TEST_TOKEN_FILE="$PWD/.deploy/$ACCOUNT_ID-$STACK_PREFIX/workflow
 node scripts/verify-workflows.ts "$SITE_URL" --execute
 ```
 
-For controlled worker recovery (briefly disables one test EventBridge schedule at a time,
+For controlled worker recovery (briefly disables one regional worker's SQS mapping at a time,
 restores it in `finally`, then reverses regions):
 
 ```sh
@@ -125,9 +127,9 @@ other worker region, not an actual AWS region outage or loss of DynamoDB quorum.
 
 The bounded acceptance runner checks auth, strongly consistent cross-region inspection,
 start/signal/approval in both directions, duplicate and concurrent requests, approval
-rejection, retry results, contiguous committed event indices, and **actual EventBridge**
+rejection, retry results, contiguous committed event indices, and **actual demand-driven**
 completion of consecutive timers. It allows four minutes for eventual GSI discovery and
-minute-based schedules, records run IDs/results under `.deploy`, and exits nonzero on any
+one-time wakeups, records run IDs/results under `.deploy`, and exits nonzero on any
 failure. Local Vitest runtime tests use the installed engine with its in-memory store;
 those do **not** establish DynamoDB/MRSC correctness.
 
@@ -138,10 +140,13 @@ personal information as workflow payloads.
 
 ## Validation evidence and issue reporting
 
-Live outcomes are recorded in [workflow-validation.md](workflow-validation.md). File
+[workflow-validation.md](workflow-validation.md) records historical polling-era outcomes,
+not proof of the current wakeup deployment. Use the [wakeup validation commands](workflow-wakeups.md#validation)
+for current deployments and retain detailed reports only under ignored `.deploy/`. File
 confirmed, minimized library defects in the upstream repository with its pinned SHA,
 region topology, reproduction, expected/actual outcome, and sanitized evidence. Do not
-publish tokens, origin credentials, AWS credentials, or raw environment/configuration dumps.
+publish account IDs, deployed resource names/IDs, ARNs, endpoints, image digests,
+tokens, origin credentials, AWS credentials, or raw environment/configuration dumps.
 Application wiring mistakes are fixed here, not reported as upstream defects.
 
 Passing this lab does not validate quorum loss, real AWS regional outages, load/throughput,
@@ -150,7 +155,7 @@ outbox. Preserve compatible workflow versions for in-flight runs during updates.
 
 ## Cleanup
 
-Stop both test schedules before teardown, then delete the test global stack, both sweeper
+Stop regional stream/queue mappings and disable remaining one-time schedules before teardown, then delete the test global stack, both sweeper
 stacks, both app stacks, and both bootstrap stacks. Delete the west workflow-table stack
 last. Delete the workflow-deployer role stack only after table operations finish. Use only the **test** prefix. These are destructive actions; the deployment script
 never performs them. Retained ECR/S3/logs/edge resources and the MRSC table require explicit

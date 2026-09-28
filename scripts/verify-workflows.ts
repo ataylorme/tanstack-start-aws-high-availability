@@ -5,7 +5,7 @@ import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout } from 'node:timers/promises'
 
 if (!process.argv.includes('--execute')) {
-  console.log('Plan only: validate token protection, cross-region workflow signals/approvals, retries, duplicate submissions, and EventBridge timer recovery. Pass HTTPS site and --execute. Uses WORKFLOW_TEST_TOKEN_FILE; creates bounded test runs, never deletes data.')
+  console.log('Plan only: validate token protection, cross-region workflow signals/approvals, retries, duplicate submissions, and demand-driven timer recovery. Pass HTTPS site and --execute. Uses WORKFLOW_TEST_TOKEN_FILE; creates bounded test runs, never deletes data.')
   process.exit(0)
 }
 const upstreamPackage = `@ataylorme/tanstack-workflow-aws@${verifyWorkflowPackage().version}`
@@ -51,7 +51,7 @@ async function waitFor(region: Region, runId: string, ready: (view: Record<strin
     if (ready(view)) return view
     await setTimeout(5000)
   }
-  throw new Error(`Timed out waiting for scheduled sweepers: ${runId}`)
+  throw new Error(`Timed out waiting for demand-driven wakeups: ${runId}`)
 }
 const finished = (region: Region, runId: string) => waitFor(region, runId, view => object(view.run).status === 'finished')
 const waitingForSignal = (view: Record<string, unknown>) => {
@@ -81,7 +81,7 @@ await Promise.all(regions.map(startRegion => scenario(`cross-region ${startRegio
   const duplicate = await call(startRegion, { action: 'signal', runId, signalId: 'once', message: startRegion })
   assert.equal(duplicate.kind, 'duplicate')
   await call(startRegion, { action: 'approve', runId, approvalId: waiting.approvalId, approved: true })
-  // No manual sweep: EventBridge must execute both durable sleeps.
+  // No manual sweep: Demand-driven workers must execute both durable sleeps.
   const view = await finished(other, runId)
   const output = object(object(view.run).output)
   assert.equal(object(output.started).region, startRegion)

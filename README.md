@@ -20,7 +20,10 @@ See the [event testing runbook](docs/application-event-testing.md) and
 ## Workflow testing branch
 
 This branch adds an isolated, token-protected TanStack Workflow AWS integration lab.
-See [deployment and testing](docs/workflow-testing.md) and [validation evidence](docs/workflow-validation.md).
+Workflow state changes trigger demand-driven wakeups; there is no recurring sweep rule
+on new deployments. See [deployment and testing](docs/workflow-testing.md),
+[demand-driven wakeups and migration](docs/workflow-wakeups.md), and
+[historical validation evidence](docs/workflow-validation.md).
 Use `ENABLE_WORKFLOW_TESTS=true` with a separate stack prefix; do not overwrite the main site.
 
 ## Start here
@@ -125,6 +128,25 @@ regional selection. A static origin-group behavior cannot allow write methods.
 The application restores the public HTTPS URL for server functions.
 No request body is included in edge events; CloudFront forwards bodies untouched.
 
+### Workflow wakeups and application events
+
+The optional workflow lab adds durable MRSC state and two separate stream-driven paths:
+
+- **Workflow wakeups:** each region reads workflow metadata changes from its local
+  DynamoDB Stream. Its dispatcher sends due work to SQS or creates an automatically
+  deleted one-time EventBridge Scheduler schedule targeting SQS. A private sweeper
+  processes the queue using the runtime's leases and fencing. Near-term deadlines use
+  delayed SQS delivery. Timers retain minute-level precision; indefinite signal/approval
+  waits do not poll. Regional duplicate wakeups are intentional for recovery.
+- **Application events:** the existing east-region consumer forwards matching immutable
+  application-event inserts from DynamoDB Streams directly to a separate SQS queue.
+  Publishing an application event does not start a workflow or schedule a sweep;
+  workflow state transitions drive workflow wakeups.
+
+There are no recurring workflow rules by default. Existing polling deployments need
+[staged migration and reconciliation](docs/workflow-wakeups.md), not just a code update.
+Eliminating idle invocations does not eliminate storage or other infrastructure charges.
+
 ### Availability boundaries
 
 - Retry criteria: **429, 500, 502, 503, 504**, plus **404** to allow missing assets to be
@@ -140,7 +162,8 @@ No request body is included in edge events; CloudFront forwards bodies untouched
 - AWS resolves the configured origin's DNS **before** invoking origin-request Lambda@Edge.
   A DNS-resolution failure can prevent routing code from running. Do not interpret this
   design as protection against every DNS or AWS control-plane failure.
-- No database, login/session state, provisioned concurrency, custom domain, WAF, or SLA.
+- The base HTTP example has no database; the optional workflow/event labs add an MRSC table.
+  No production login/session state, provisioned concurrency, custom domain, WAF, or SLA.
   Buffered Function URL responses use Lambda's buffered response limits (including 6 MB);
   SSR is buffered rather than streamed to the viewer.
 
@@ -154,6 +177,9 @@ No request body is included in edge events; CloudFront forwards bodies untouched
 | `infra/bootstrap.yaml` | Regional ECR and east-region artifact bucket |
 | `infra/regional.yaml` | Container Lambda, Function URL permissions, logs and alarms |
 | `infra/global.yaml` | Edge function/version, viewer function, CloudFront distribution and policies |
+| `infra/workflow-table.yaml` | Optional MRSC workflow/event table and regional streams |
+| `infra/workflow-sweeper.yaml` | Regional demand-driven dispatchers, one-time scheduling, queues and workers |
+| `infra/application-events.yaml` | Separate east-region application-event stream-to-SQS bridge |
 | `scripts/` | Explicit deployment, regional failure toggling, local and live smoke checks |
 | `tests/` | Vitest routing, origin security, URL reconstruction and tooling safety tests |
 | `.github/workflows/ci.yaml` | Build, strict typecheck, Vitest, smoke, IaC lint and container smoke |

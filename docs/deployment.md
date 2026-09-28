@@ -18,6 +18,21 @@ For browser-based temporary credentials, use a recent AWS CLI v2 and
 `aws login --profile your-sandbox-profile`; a long-lived IAM access key is not required.
 Confirm the resulting identity before deployment. Avoid root credentials.
 
+## Optional workflow and application-event labs
+
+The instructions below describe the five-stack HTTP example. For this branch's optional
+stateful labs, use an isolated prefix and the [workflow deployment runbook](workflow-testing.md);
+application-event delivery adds its [own stream-to-SQS stack](application-event-testing.md).
+Workflow deployments additionally need DynamoDB, EventBridge Scheduler, EventBridge
+(for legacy-rule migration), and SQS permissions.
+
+New workflow stacks use regional DynamoDB Stream dispatchers, one-time Scheduler
+wakeups targeting SQS, and queue-triggered sweepers—not permanent minute-based rules.
+For existing polling stacks, follow [wakeup migration, validation and rollback](workflow-wakeups.md).
+Normal full updates preserve the existing legacy-rule mode and do not perform that cutover.
+Keep account IDs, deployed ARNs, endpoints, artifact digests and rollback evidence only
+in ignored private deployment files, never in public documentation or PR descriptions.
+
 ## First deployment
 
 Complete the [local setup and checks](getting-started.md) first. Run commands from the

@@ -1,7 +1,10 @@
 # PR #4 application-event integration lab
 
 Branch: `test/tanstack-workflow-aws`. The application-event integration was merged
-into this branch. This lab is separate from workflow replay events.
+into this branch. This lab is separate from workflow replay events and workflow wakeups.
+Application events already use demand-driven stream delivery; publishing one does not
+implicitly start a workflow. See [workflow wakeups](workflow-wakeups.md) for the separate
+regional stream → dispatcher → one-time Scheduler/SQS → sweeper path.
 
 ## Published package and reproducibility
 
@@ -163,7 +166,8 @@ The run status is recorded in [application-event-validation.md](application-even
 ## Cleanup
 
 No script deletes stacks, purges queues, or deletes table items. Disable the event
-mapping and workflow schedules before an explicitly authorized teardown. Delete the
+mapping, regional workflow stream/queue mappings, and remaining one-time workflow
+schedules before an explicitly authorized teardown. Delete the
 application-events stack before the table, then follow the workflow lab teardown.
 The retained table, failure archive, logs, ECR and artifacts continue to incur charges
 until separately cleaned up. Preserve evidence and failed payloads first.

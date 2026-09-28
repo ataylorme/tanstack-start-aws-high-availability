@@ -1,8 +1,10 @@
-# Workflow AWS validation evidence
+# Workflow AWS historical validation evidence
 
 > Historical AWS evidence: both deployments and their artifacts were subsequently torn down.
 > The branch now installs the published GitHub Packages prerelease `@ataylorme/tanstack-workflow-aws@0.2.0-rc.0`.
-> The AWS results below concern the earlier Git-pinned dependency, not a new deployment of the published tarball.
+> The AWS results below concern the earlier Git-pinned dependency and legacy recurring
+> sweeps, not the current published-package or demand-driven wakeup deployment.
+> For the current architecture, migration and validation, use [workflow wakeups](workflow-wakeups.md).
 
 Validated on **2026-09-26** against upstream
 [`f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c`](https://github.com/ataylorme/tanstack-workflow-aws/tree/f026a1080b9d7d2e0d25b2735a9c0ce0945c4e2c).
@@ -11,13 +13,10 @@ Validated on **2026-09-26** against upstream
 
 - Branch: `test/tanstack-workflow-aws`.
 - Former lab URL and AWS account ID are omitted from public evidence.
-- Isolated stack prefix: `tanstack-wf-test`.
 - All nine CloudFormation stacks reached `CREATE_COMPLETE`; CloudFront deployed.
 - DynamoDB MRSC: `ACTIVE`, `STRONG`, replicas in Northern Virginia/Oregon and an active Ohio witness.
-- Application release: `ee9fbc6-1790459916687`. Subsequent changes before validation concerned scripts, tests and documentation, not deployed application code.
-- Container digest: `sha256:d69a96f5501ef2b5301aa2b9d39db98246ed5bc1035c7b41b69b75d4d6922b23`.
-- Both native Node.js 22 sweepers have code SHA-256 `7YKOSiZfwrsqXwPuI61IiCi/n6wJq57Wa/pS9XBKn84=`.
-  Their workflow output uses the fallback release label `development` because these ZIP workers do not set `RELEASE_ID`; the code digest above identifies their deployed artifact.
+- Deployed release labels, image/code digests, and resource identifiers are omitted from public evidence.
+- Both native Node.js 22 sweepers used recurring rules in this historical deployment.
 
 ```mermaid
 flowchart LR
@@ -43,22 +42,22 @@ flowchart LR
 - Both cross-region runs: opposite-region immediate read, signal delivery, approval, intentional retry succeeding on attempt 2, duplicate signal suppression, two scheduled durable sleeps, contiguous event indices and identical final regional reads passed.
 - Concurrent starts/signals from both regions: one signal resolution, approval rejection and preserved payload passed.
 
-| Scenario | Durable run ID | Events |
-| --- | --- | --- |
-| Virginia start, Oregon signal | `test-c45fe1fc-ea1d-4d8c-82e7-f5a00b179ea5` | 14 |
-| Oregon start, Virginia signal | `test-5b666b16-58c7-49af-96cf-105a3369edf9` | 14 |
-| Concurrent duplicates and rejection | `test-08b670aa-cb6c-41be-bd0d-93b4d6cec397` | 8 |
+| Scenario | Committed events |
+| --- | --- |
+| Virginia start, Oregon signal | 14 |
+| Oregon start, Virginia signal | 14 |
+| Concurrent duplicates and rejection | 8 |
 
 Machine-readable workflow results are in [workflow-validation.json](workflow-validation.json). Site URLs in the linked evidence reports use a reserved `.invalid` placeholder rather than a deployment hostname.
 
-## Scheduled-worker recovery
+## Historical scheduled-worker recovery
 
 Both directions passed without manually invoking a sweeper:
 
-| Disabled schedule | Worker completing both sleeps | Run ID |
-| --- | --- | --- |
-| Virginia | Oregon | `test-recovery-0cb9b12a-3844-4be0-b67c-4f29b9e782a4` |
-| Oregon | Virginia | `test-recovery-f2e20762-9400-4c96-83fe-d0d657e5826e` |
+| Disabled schedule | Worker completing both sleeps |
+| --- | --- |
+| Virginia | Oregon |
+| Oregon | Virginia |
 
 Both schedules were restored to `ENABLED` by the recovery runner. See [workflow-recovery.json](workflow-recovery.json). The workflow acceptance suite overlapped the first recovery scenario, so its timer work also completed through Oregon while Virginia scheduling was paused. This demonstrates worker-schedule unavailability, not an actual regional outage.
 
@@ -73,4 +72,4 @@ A transient ECR upload connection failure was recovered with smaller upload part
 
 No upstream runtime defect was observed in these bounded scenarios. This is not production certification, load testing, a real AWS regional outage, or a quorum-loss experiment. Browser interactions were not automated; HTTP/API behavior and rendered markup were checked. Test runs intentionally contain no sensitive application data.
 
-The existing main deployment remained healthy at release `a603cab-update`; its resources were not updated. The isolated lab and main deployment were later torn down at the owner's request. The API token remains in the owner-only local file `.deploy/<account-id>-<stack-prefix>/workflow-test-token`, not in this repository. See [workflow-testing.md](workflow-testing.md) for use, repeatable validation and teardown.
+The existing main deployment remained healthy; its resources were not updated. The isolated lab and main deployment were later torn down at the owner's request. The API token remains in the owner-only local file `.deploy/<account-id>-<stack-prefix>/workflow-test-token`, not in this repository. See [workflow-testing.md](workflow-testing.md) for use, repeatable validation and teardown.

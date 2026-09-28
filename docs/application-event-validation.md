@@ -1,4 +1,9 @@
-# Application-event validation status
+# Application-event historical validation status
+
+> These results record the application-event checks on 2026-09-27 and the later
+> registry-source switch. They are not a current deployment inventory or workflow
+> wakeup acceptance report. Application-event delivery remains stream-driven and
+> separate from [demand-driven workflow wakeups](workflow-wakeups.md).
 
 Candidate: upstream PR #4, commit `5f2e2b9416049b8173c8d29b8b153dec9a5026ad`.
 See `src/events/package-provenance.json` for the published package source and checksums.
@@ -53,7 +58,8 @@ Intermittent ECR upload connection failures were recovered by resuming the same 
 image, without changing its digest or rotating deployment secrets. These were
 transport failures, not application-event test failures.
 
-Sandbox resources remain deployed and billable. No destructive cleanup was performed.
+At the time of these checks, sandbox resources remained deployed and billable; no
+destructive cleanup was performed. This historical report does not establish their current state.
 Use the runbook for repeat validation and explicit teardown. Passing these integration
 checks is not blanket approval of PR #4 or proof of production outbox/idempotency semantics.
 

@@ -16,12 +16,15 @@
     "smoke": "node scripts/smoke.ts",
     "build:edge": "tsc -p edge/tsconfig.json",
     "test:watch": "vitest",
-    "build:sweeper": "esbuild src/workflows/sweeper.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/sweeper/sweeper.js",
+    "build:sweeper": "esbuild src/workflows/sweeper.ts src/workflows/dispatcher.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist/sweeper",
     "build:events": "esbuild src/events/consumer.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/events/handler.js"
   },
   "dependencies": {
     "@ataylorme/tanstack-workflow-aws": "0.2.0-rc.0",
+    "@aws-sdk/client-dynamodb": "3.1136.0",
+    "@aws-sdk/client-scheduler": "3.1136.0",
     "@aws-sdk/client-sqs": "3.1141.0",
+    "@aws-sdk/lib-dynamodb": "3.1136.0",
     "@tanstack/react-router": "1.170.38",
     "@tanstack/react-start": "1.168.56",
     "nitro": "3.0.260903-beta",
