@@ -25,7 +25,7 @@ node scripts/deploy-workflow-wakeups.ts --execute --legacy=disabled
 node scripts/deploy-workflow-wakeups.ts --execute --legacy=removed
 ```
 
-The targeted deployment preserves app images and credentials. Normal full deployments retain an existing stack's legacy mode rather than silently cutting it over. Both dispatchers use the version-pinned workflow package's due-field storage contract; rerun contract/recovery tests when upgrading that package. Worker concurrency is capped at two per region because each invocation scans shared due work.
+The targeted deployment preserves app images and credentials. Normal full deployments retain an existing stack's legacy mode rather than silently cutting it over. Both dispatchers use the version-pinned workflow package's due-field storage contract; rerun contract/recovery tests when upgrading that package. Workers use default SQS scaling without a maximum-concurrency cap, allowing Lambda’s low-traffic polling optimization. Empty-queue polling does not stop entirely. Bursts can cause redundant shared due-work reads; workflow leases coordinate execution. Re-run abandoned-claim and regional recovery checks after changing scaling. The explicit empty CloudFormation `ScalingConfig` clears previously deployed caps.
 
 ## Validation
 

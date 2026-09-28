@@ -70,7 +70,8 @@ for (const pausedRegion of regions) {
       await setTimeout(5000)
     }
     assert.ok(output, `Other-region demand-driven recovery timed out: ${runId}`)
-    assert.equal(object(output.started).region, pausedRegion)
+    // Starting the run also wakes the healthy region; either region can claim it.
+    assert.ok(regions.includes(object(output.started).region as typeof regions[number]))
     assert.equal(object(output.firstWake).region, healthyRegion)
     assert.equal(object(output.finished).region, healthyRegion)
     outcomes.push({ pausedRegion, runId, output })

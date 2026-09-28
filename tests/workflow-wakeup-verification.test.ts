@@ -4,6 +4,16 @@ import { describe, expect, it } from 'vitest'
 const recovery = readFileSync(new URL('../scripts/verify-workflow-recovery.ts', import.meta.url), 'utf8')
 const idle = readFileSync(new URL('../scripts/verify-workflow-wakeups.ts', import.meta.url), 'utf8')
 describe('workflow wakeup verification safeguards', () => {
+  it('distinguishes HTTP routing from background execution ownership', () => {
+    const workflow = readFileSync('scripts/verify-workflows.ts', 'utf8')
+    expect(workflow).toContain("assert.equal(response.headers.get('x-served-by-region'), region)")
+    expect(workflow).toContain('regions.includes(object(output.started).region')
+    expect(workflow).toContain('regions.includes(object(output.signaled).region')
+    expect(workflow).not.toContain('assert.equal(object(output.signaled).region, other)')
+    expect(recovery).toContain('regions.includes(object(output.started).region')
+    expect(recovery).toContain('assert.equal(object(output.firstWake).region, healthyRegion)')
+    expect(recovery).toContain('assert.equal(object(output.finished).region, healthyRegion)')
+  })
   it('pauses queue mappings and restores them after either outcome', () => {
     expect(recovery).toContain("OutputKey=='WakeupMappingId'")
     expect(recovery).toContain("await waitForMapping(pausedRegion, mapping, 'Disabled')")

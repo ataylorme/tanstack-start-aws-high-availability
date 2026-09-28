@@ -18,6 +18,13 @@ describe('demand-driven workflow infrastructure', () => {
     expect(template).toContain('AllowedValues: [enabled, disabled, removed]')
     expect(template.match(/Condition: KeepLegacySchedule/g)).toHaveLength(3)
   })
+  it('clears the queue concurrency cap to allow low-traffic polling optimization', () => {
+    const queueMapping = template.split('  QueueMapping:')[1]!.split('  IteratorAgeAlarm:')[0]!
+    expect(queueMapping).toContain('ScalingConfig: {}')
+    expect(queueMapping).not.toContain('MaximumConcurrency')
+    expect(template).not.toContain('ReservedConcurrentExecutions')
+    expect(queueMapping).not.toContain('ProvisionedPollerConfig')
+  })
   it('provides durable regional wakeups with scoped IAM and bounded retries', () => {
     expect(template).toContain('VisibilityTimeout: 360')
     expect(template).toContain('Handler: dispatcher.handler')
