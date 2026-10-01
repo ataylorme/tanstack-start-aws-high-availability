@@ -8,7 +8,7 @@ ignored `.deploy/` files. This is a reference lab, not production qualification.
 ## Passed
 
 - Production app, edge and all four native worker bundles; strict TypeScript;
-  207 tests across 21 suites; healthy/failure production smoke; CloudFormation lint.
+  220 tests across 24 suites; healthy/failure production smoke; CloudFormation lint.
 - Both regional apps use one digest-pinned image and the recorded registry artifact.
   CloudFront routing/SSR and all health endpoint methods pass in both regions.
 - Staged stream-view migration preserves the MRSC table and historical rc.0 data;
@@ -98,6 +98,9 @@ load-tested. Existing alarms have no paging actions.
 The blocked subscriber uses a proven no-effect synthetic failure, not an uncertain
 external provider. No real region outage, arbitrary external exactly-once effect,
 production load/latency claim, or long-duration idle guarantee is asserted.
+
+See [regional-outage simulation](regional-outage-validation.md) for the combined
+origin, worker, and MRSC isolation drill and its distinct claim boundaries.
 
 See [feature matrix and deployment procedure](rc1-lab.md). Older validation documents
 record rc.0 results and must not be substituted for this release's evidence.
