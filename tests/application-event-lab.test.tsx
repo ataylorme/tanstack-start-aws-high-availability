@@ -15,7 +15,10 @@ it('renders an accessible event lab with explicit delivery boundaries', () => {
   expect(html).toContain('role="status"')
   expect(html).toContain('never delete messages')
   expect(html).toContain('not observed is inconclusive')
-  expect(html.match(/<button disabled=""/g)).toHaveLength(4)
+  expect(html.match(/<button disabled=""/g)).toHaveLength(14)
+  expect(html).toContain('Ordered lifecycle / rc.1')
+  expect(html).toContain('retained-source payloads')
+  expect(html).toContain('not a general operator resolution endpoint')
 })
 it('normalizes envelope property order but detects a changed timestamp or payload', () => {
   const normalized = eventEnvelope({ data: envelope.data, timestamp: envelope.timestamp, version: 1, type: envelope.type, id: envelope.id })

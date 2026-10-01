@@ -1,5 +1,9 @@
 # Workflow integration test branch
 
+> **rc.1:** See [the current upgrade/feature guide](rc1-lab.md) for unified routing,
+> ordered delivery and staged migration. Architecture and validation below describe
+> the prior integration where explicitly noted.
+
 This branch tests the published **`@ataylorme/tanstack-workflow-aws@0.2.0-rc.0`** package from GitHub Packages, pinned exactly in `package.json` and the lockfile.
 It imports the store and its matching bundled workflow/runtime snapshot—not an
 independently versioned TanStack Workflow engine. Upstream is experimental.

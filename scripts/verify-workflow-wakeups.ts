@@ -30,7 +30,15 @@ function drained(): boolean {
       if (count !== 0) empty = false
     }
     const schedules = aws(region, ['scheduler', 'list-schedules', '--group-name', outputs.ScheduleGroupName]).Schedules
-    if (schedules.length !== 0) empty = false
+    // Retention intentionally leaves one-time CLEANUP deadlines days in the future.
+    // They are not active workflow execution and must not prevent idle observation.
+    for (const schedule of schedules) {
+      let detail
+      try { detail = aws(region, ['scheduler', 'get-schedule', '--group-name', outputs.ScheduleGroupName, '--name', schedule.Name]) }
+      catch { empty = false; continue } // An auto-delete race is retried next pass.
+      const wakeup = JSON.parse(detail.Target.Input)
+      if (wakeup.dueKind !== 'CLEANUP' || wakeup.dueAt <= Date.now()) empty = false
+    }
     const resources = aws(region, ['cloudformation', 'list-stack-resources', '--stack-name', `${prefix}-sweeper`]).StackResourceSummaries
     const alarmNames = resources.filter((entry: { ResourceType: string }) => entry.ResourceType === 'AWS::CloudWatch::Alarm').map((entry: { PhysicalResourceId: string }) => entry.PhysicalResourceId)
     if (alarmNames.length) {

@@ -15,7 +15,7 @@ if (args.some((arg) => arg !== '--execute' && !/^--legacy=(enabled|disabled|remo
 }
 const legacy = args.find((arg) => arg.startsWith('--legacy='))?.split('=')[1] ?? 'removed'
 if (!args.includes('--execute')) {
-  console.log(`Workflow wakeup deployment plan (no AWS calls made):\nVerify existing ${prefix}-workflow and bootstrap/sweeper stacks in us-east-1 and us-west-2.\nBundle dispatcher and sweeper; upload content-addressed ZIPs. Save rollback evidence under ignored .deploy.\nPreview guarded CloudFormation change sets; deploy with legacy schedule ${legacy}.\nFor migration: --legacy=enabled, reconcile, --legacy=disabled, validate, then --legacy=removed.\nExecution requires EXPECTED_AWS_ACCOUNT_ID and AWS_PROFILE.`)
+  console.log(`Workflow wakeup deployment plan (no AWS calls made):\nVerify existing ${prefix}-workflow and bootstrap/sweeper stacks in us-east-1 and us-west-2.\nRequire NEW_AND_OLD_IMAGES and disable the legacy application-event stream mapping first.\nBundle unified dispatcher, targeted worker, FIFO relay and ordered subscriber; upload content-addressed ZIPs. Save rollback evidence under ignored .deploy.\nPreview guarded CloudFormation change sets; deploy with legacy schedule ${legacy}.\nFor migration: --legacy=enabled, reconcile, --legacy=disabled, validate, then --legacy=removed.\nExecution requires EXPECTED_AWS_ACCOUNT_ID and AWS_PROFILE.`)
   process.exit(0)
 }
 if (!/^\d{12}$/.test(process.env.EXPECTED_AWS_ACCOUNT_ID ?? '') || !process.env.AWS_PROFILE) {
@@ -35,12 +35,12 @@ mkdirSync(evidence, { recursive: true, mode: 0o700 })
 function save(name: string, data: unknown) { writeFileSync(resolve(evidence, name), JSON.stringify(data, null, 2), { mode: 0o600 }) }
 const work = mkdtempSync(resolve(tmpdir(), 'workflow-wakeups-'))
 try {
-  run('node_modules/.bin/esbuild', ['src/workflows/dispatcher.ts', 'src/workflows/sweeper.ts', '--bundle', '--platform=node', '--target=node22', '--format=cjs', `--outdir=${work}`])
+  run('node_modules/.bin/esbuild', ['src/workflows/dispatcher.ts', 'src/workflows/sweeper.ts', 'src/workflows/application-consumer.ts', 'src/events/ordered-subscriber.ts', '--bundle', '--platform=node', '--target=node22', '--format=cjs', '--entry-names=[name]', `--outdir=${work}`])
   const archive = resolve(work, 'wakeups.zip')
   // ZIP stores DOS local timestamps: fix both file times and zip's timezone.
   const fixedTime = new Date('2000-01-01T00:00:00Z')
-  for (const name of ['dispatcher.js', 'sweeper.js']) utimesSync(resolve(work, name), fixedTime, fixedTime)
-  execFileSync('zip', ['-X', '-j', archive, resolve(work, 'dispatcher.js'), resolve(work, 'sweeper.js')],
+  for (const name of ['dispatcher.js', 'sweeper.js', 'application-consumer.js', 'ordered-subscriber.js']) utimesSync(resolve(work, name), fixedTime, fixedTime)
+  execFileSync('zip', ['-X', '-j', archive, resolve(work, 'dispatcher.js'), resolve(work, 'sweeper.js'), resolve(work, 'application-consumer.js'), resolve(work, 'ordered-subscriber.js')],
     { env: { ...process.env, TZ: 'UTC' }, stdio: ['ignore', 'pipe', 'inherit'] })
   const hash = createHash('sha256').update(readFileSync(archive)).digest('hex')
   const key = `workflow-wakeups/${hash}.zip`
@@ -52,7 +52,7 @@ try {
     const safeParameters = previous.Parameters.filter((p: { ParameterKey: string }) => ['TableName', 'CodeBucket', 'CodeKey', 'StreamArn', 'LegacyScheduleMode'].includes(p.ParameterKey))
     save(`${region}-rollback.json`, { template: template.TemplateBody, parameters: safeParameters })
     const { Table: table } = JSON.parse(aws(region, ['dynamodb', 'describe-table', '--table-name', `${prefix}-workflow`, '--output', 'json']))
-    if (table.TableStatus !== 'ACTIVE' || table.MultiRegionConsistency !== 'STRONG' || !table.StreamSpecification?.StreamEnabled || !['NEW_IMAGE', 'NEW_AND_OLD_IMAGES'].includes(table.StreamSpecification.StreamViewType) || !table.LatestStreamArn?.includes(`:dynamodb:${region}:`)) throw new Error('Expected ACTIVE MRSC table with regional image stream')
+    if (table.TableStatus !== 'ACTIVE' || table.MultiRegionConsistency !== 'STRONG' || !table.StreamSpecification?.StreamEnabled || table.StreamSpecification.StreamViewType !== 'NEW_AND_OLD_IMAGES' || !table.LatestStreamArn?.includes(`:dynamodb:${region}:`)) throw new Error('Expected ACTIVE MRSC table with regional NEW_AND_OLD_IMAGES stream')
     const bucket = aws(region, ['cloudformation', 'describe-stacks', '--stack-name', `${prefix}-bootstrap`, '--query', "Stacks[0].Outputs[?OutputKey=='ArtifactBucket'].OutputValue | [0]", '--output', 'text'])
     if (!bucket || bucket === 'None') throw new Error('Missing regional ArtifactBucket')
     aws(region, ['s3', 'cp', archive, `s3://${bucket}/${key}`, '--only-show-errors'])
@@ -68,23 +68,42 @@ try {
       else break
     } while (Date.now() < deadline)
     save(`${region}-changeset.json`, change)
-    if (change.Status === 'FAILED' && /didn.t contain changes|No updates/i.test(change.StatusReason ?? '')) { console.log(`${region}: no changes`); continue }
-    if (change.Status !== 'CREATE_COMPLETE') throw new Error(`Change set not ready: ${change.Status}`)
-    for (const { ResourceChange: resource } of change.Changes ?? []) {
-      assertSafeWakeupChange(resource)
+    if (change.Status === 'FAILED' && /didn.t contain changes|No updates/i.test(change.StatusReason ?? '')) {
+      console.log(`${region}: no template changes; verifying live mappings`)
+    } else {
+      if (change.Status !== 'CREATE_COMPLETE') throw new Error(`Change set not ready: ${change.Status}`)
+      for (const { ResourceChange: resource } of change.Changes ?? []) {
+        if (resource.LogicalResourceId === 'StreamMapping' && resource.Action === 'Modify' && resource.Replacement === 'True') {
+          // Stream view migration necessarily replaces the mapping. Never replace a
+          // live reader: --prepare must have disabled it before changing the ARN.
+          const oldId = previous.Outputs.find((item: { OutputKey: string }) => item.OutputKey === 'StreamMappingId')?.OutputValue
+          if (!oldId) throw new Error('Missing old stream mapping evidence')
+          const old = JSON.parse(aws(region, ['lambda', 'get-event-source-mapping', '--uuid', oldId, '--output', 'json']))
+          if (old.State !== 'Disabled' || old.EventSourceArn === table.LatestStreamArn ||
+              !resource.Details?.some(detail => detail.Target?.Name === 'EventSourceArn') ||
+              !resource.Details?.every(detail => ['EventSourceArn', 'FilterCriteria'].includes(detail.Target?.Name ?? ''))) throw new Error('Stream replacement requires disabled old reader and only expected ARN/filter changes')
+          save(`${region}-retired-mapping.json`, old)
+        } else assertSafeWakeupChange(resource)
+      }
+      console.log(`${region}: reviewed ${change.Changes?.length ?? 0} changes; deploying legacy=${legacy}`)
+      aws(region, ['cloudformation', 'execute-change-set', '--stack-name', stack, '--change-set-name', changeSet])
+      aws(region, ['cloudformation', 'wait', 'stack-update-complete', '--stack-name', stack])
     }
-    console.log(`${region}: reviewed ${change.Changes?.length ?? 0} changes; deploying legacy=${legacy}`)
-    aws(region, ['cloudformation', 'execute-change-set', '--stack-name', stack, '--change-set-name', changeSet])
-    aws(region, ['cloudformation', 'wait', 'stack-update-complete', '--stack-name', stack])
     const deployed = JSON.parse(aws(region, ['cloudformation', 'describe-stacks', '--stack-name', stack, '--output', 'json'])).Stacks[0]
     save(`${region}-deployed.json`, { status: deployed.StackStatus, outputs: deployed.Outputs })
-    for (const output of ['StreamMappingId', 'QueueMappingId']) {
+    for (const output of ['StreamMappingId', 'QueueMappingId', 'ApplicationMappingId', 'OrderedMappingId']) {
       const uuid = deployed.Outputs.find((item: { OutputKey: string }) => item.OutputKey === output)?.OutputValue
       if (!uuid) throw new Error(`Missing ${output}`)
       const mappingDeadline = Date.now() + 180_000
       while (true) {
         const mapping = JSON.parse(aws(region, ['lambda', 'get-event-source-mapping', '--uuid', uuid, '--output', 'json']))
         if (mapping.State === 'Enabled') break
+        // A retried prepare can disable an unchanged mapping out-of-band. Only
+        // restore the verified current stream; never revive the retired reader.
+        if (output === 'StreamMappingId' && mapping.State === 'Disabled' && mapping.EventSourceArn === table.LatestStreamArn) {
+          aws(region, ['lambda', 'update-event-source-mapping', '--uuid', uuid, '--enabled'])
+          continue
+        }
         if (!['Creating', 'Enabling', 'Updating'].includes(mapping.State) || Date.now() > mappingDeadline) throw new Error(`Mapping not enabled: ${output}: ${mapping.State}`)
         await new Promise((done) => setTimeout(done, 3_000))
       }

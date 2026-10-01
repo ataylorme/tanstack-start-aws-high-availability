@@ -1,5 +1,9 @@
 # Demand-driven workflow wakeups
 
+> **rc.1:** See [the current upgrade/feature guide](rc1-lab.md) for unified routing,
+> ordered delivery and staged migration. Architecture and validation below describe
+> the prior integration where explicitly noted.
+
 Workflow state changes drive regional DynamoDB Stream dispatchers. Due work enters SQS immediately; future work uses automatically deleted, one-time EventBridge Scheduler schedules targeting SQS. Deadlines within 15 seconds use delayed SQS delivery to avoid creating a schedule whose deadline passes during the API call. The existing runtime retains conditional leases and fencing. Regional duplicate wakeups are intentional. Indefinite signal/approval waits do not poll; a committed state transition resumes processing.
 
 Timer precision remains minute-level. Removing idle sweeps does not remove all infrastructure charges.

@@ -59,7 +59,7 @@ describe('application-event verification and candidate packaging', () => {
     expect(manifest.repository).toBe('https://github.com/ataylorme/tanstack-workflow-aws')
     expect(manifest.pullRequest).toBe(4)
     expect(manifest.commit).toMatch(/^[a-f0-9]{40}$/)
-    expect(manifest.version).toBe('0.2.0-rc.0')
+    expect(manifest.version).toBe('0.2.0-rc.1')
     expect(manifest.registry).toBe('https://npm.pkg.github.com')
     expect(manifest.sha256).toMatch(/^[a-f0-9]{64}$/)
     expect(manifest.integrity).toMatch(/^sha512-/)

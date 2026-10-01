@@ -34,7 +34,7 @@ it('preserves the committed envelope and maps conflict/ambiguous failure', async
   const publisher = { publish } as ApplicationEventPublisher
   const response = await applicationEventsApi(request(body), publisher)
   expect(response.status).toBe(202)
-  expect(response.headers.get('x-event-candidate')).toBe('5f2e2b9416049b8173c8d29b8b153dec9a5026ad')
+  expect(response.headers.get('x-event-candidate')).toBe('bfecb80ecf02d1f9630514a082030b63168e1d72')
   expect(response.headers.get('x-event-artifact')).toMatch(/^[a-f0-9]{64}$/)
   expect(await response.json()).toEqual(event)
   expect(publish).toHaveBeenCalledWith(parseEvent(body))

@@ -14,9 +14,9 @@ Resources:
       TableName: !Ref TableName
       BillingMode: PAY_PER_REQUEST
       MultiRegionConsistency: STRONG
-      # Regional workflow wakeup dispatchers and the separate application-event bridge
-      # share the stream; each mapping filters for its own record types. No polling rule.
-      StreamSpecification: { StreamViewType: NEW_IMAGE }
+      # One regional unified router handles workflow obligations and application events.
+      # Old images allow eligibility-change coalescing; no recurring polling rule.
+      StreamSpecification: { StreamViewType: NEW_AND_OLD_IMAGES }
       AttributeDefinitions:
         - { AttributeName: PK, AttributeType: S }
         - { AttributeName: SK, AttributeType: S }

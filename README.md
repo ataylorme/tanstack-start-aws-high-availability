@@ -10,12 +10,14 @@ Infrastructure is plain **CloudFormation**, not CDK, SAM, or Terraform.
 
 ## Application events test branch
 
-This branch pins published `@ataylorme/tanstack-workflow-aws@0.2.0-rc.0` from
+This branch pins published `@ataylorme/tanstack-workflow-aws@0.2.0-rc.1` from
 GitHub Packages ([upstream PR #4](https://github.com/ataylorme/tanstack-workflow-aws/pull/4))
 and adds a browser application-event lab with authenticated publishing, cross-region
 retry/conflict checks, and real DynamoDB Stream-to-SQS delivery observation.
+The [rc.1 upgrade and feature matrix](docs/rc1-lab.md) covers unified push workers,
+ordered subscribers, committed effects, continuation, schedules and lifecycle limits.
 See the [event testing runbook](docs/application-event-testing.md) and
-[validation status](docs/application-event-validation.md).
+[current rc.1 validation](docs/rc1-validation.md) (the earlier [rc.0 evidence](docs/application-event-validation.md) is historical).
 
 ## Workflow testing branch
 
@@ -138,10 +140,11 @@ The optional workflow lab adds durable MRSC state and two separate stream-driven
   processes the queue using the runtime's leases and fencing. Near-term deadlines use
   delayed SQS delivery. Timers retain minute-level precision; indefinite signal/approval
   waits do not poll. Regional duplicate wakeups are intentional for recovery.
-- **Application events:** the existing east-region consumer forwards matching immutable
-  application-event inserts from DynamoDB Streams directly to a separate SQS queue.
-  Publishing an application event does not start a workflow or schedule a sweep;
-  workflow state transitions drive workflow wakeups.
+- **Application events:** each regional unified router hands application notifications to
+  SQS FIFO, then a relay publishes to SNS FIFO. Ordered subscribers share MRSC cursors
+  across regions; the existing east observation queue remains available for delivery checks.
+  Publication does not implicitly start a workflow. The same router also schedules
+  committed outbox and retention-cleanup obligations.
 
 There are no recurring workflow rules by default. Existing polling deployments need
 [staged migration and reconciliation](docs/workflow-wakeups.md), not just a code update.

@@ -3,8 +3,16 @@ import { createDynamoWorkflowExecutionStore } from '@ataylorme/tanstack-workflow
 import { defineWorkflowRuntime } from '@ataylorme/tanstack-workflow-aws/runtime'
 import { workflows } from './definitions'
 
+export const WORKFLOW_LIMITS = {
+  maxHistoryEvents: 64,
+  maxHistoryBytes: 1024 * 1024,
+  maxItemBytes: 300 * 1024,
+  maxSignalIds: 1000,
+  terminalRetentionMs: 7 * 24 * 60 * 60 * 1000,
+  tombstoneRetentionMs: 30 * 24 * 60 * 60 * 1000,
+}
 export function createWorkflowServices(tableName: string) {
-  const store = createDynamoWorkflowExecutionStore({ tableName })
+  const store = createDynamoWorkflowExecutionStore({ tableName, limits: WORKFLOW_LIMITS })
   const runtime = defineWorkflowRuntime({ store, workflows, defaultLeaseMs: 60_000 })
   return { store, runtime }
 }

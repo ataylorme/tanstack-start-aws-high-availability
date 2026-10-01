@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Demand-driven workflow wakeups; deploy independently in both application regions.
+Description: Unified stream fanout and targeted workflow workers; deploy independently in both application regions.
 Parameters:
   TableName:
     Type: String
@@ -97,6 +97,7 @@ Resources:
           SCHEDULE_GROUP: !Ref ScheduleGroup
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
           SCHEDULER_DLQ_ARN: !GetAtt SchedulerDLQ.Arn
+          APPLICATION_QUEUE_URL: !Ref ApplicationQueue
   SweepRule:
     Condition: KeepLegacySchedule
     Type: AWS::Events::Rule
@@ -183,7 +184,7 @@ Resources:
                   StringEquals: { 'iam:PassedToService': scheduler.amazonaws.com }
               - Effect: Allow
                 Action: sqs:SendMessage
-                Resource: !GetAtt WakeupQueue.Arn
+                Resource: [!GetAtt WakeupQueue.Arn, !GetAtt ApplicationQueue.Arn]
               - Effect: Allow
                 Action: [s3:PutObject, s3:ListBucket]
                 Resource: [!GetAtt FailureArchive.Arn, !Sub '${FailureArchive.Arn}/*']
@@ -212,6 +213,7 @@ Resources:
           SCHEDULE_GROUP: !Ref ScheduleGroup
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
           SCHEDULER_DLQ_ARN: !GetAtt SchedulerDLQ.Arn
+          APPLICATION_QUEUE_URL: !Ref ApplicationQueue
   FailureArchive:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -242,7 +244,7 @@ Resources:
         OnFailure: { Destination: !GetAtt FailureArchive.Arn }
       FilterCriteria:
         Filters:
-          - Pattern: '{"eventName":["INSERT","MODIFY"],"dynamodb":{"NewImage":{"duePK":{"S":["RUNNING","TIMER_RUN","TIMER","SCHEDULE"]},"dueSK":{"N":[{"exists":true}]}}}}'
+          - Pattern: '{"eventName":["INSERT","MODIFY"],"dynamodb":{"NewImage":{"SK":{"S":["META"]}}}}'
   QueueMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
@@ -352,7 +354,7 @@ Resources:
     Type: AWS::Logs::MetricFilter
     Properties:
       LogGroupName: !Ref DispatcherLogGroup
-      FilterPattern: '"workflow_wakeup_dispatch_failed"'
+      FilterPattern: '"workflow_router_failed"'
       MetricTransformations:
         - MetricNamespace: WorkflowWakeups
           MetricName: !Sub '${AWS::StackName}-DispatchFailure'
@@ -390,6 +392,288 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+  ApplicationDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Join ['', ['application-dlq-', !Select [2, !Split ['/', !Ref 'AWS::StackId']], '.fifo']]
+      FifoQueue: true
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  ApplicationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Join ['', ['application-', !Select [2, !Split ['/', !Ref 'AWS::StackId']], '.fifo']]
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      SqsManagedSseEnabled: true
+      VisibilityTimeout: 360
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy: { deadLetterTargetArn: !GetAtt ApplicationDLQ.Arn, maxReceiveCount: 8 }
+  ApplicationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Join ['', ['application-', !Select [2, !Split ['/', !Ref 'AWS::StackId']], '.fifo']]
+      FifoTopic: true
+      ContentBasedDeduplication: false
+  ApplicationTopicFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SNS
+      MetricName: NumberOfNotificationsFailed
+      Dimensions: [{ Name: TopicName, Value: !GetAtt ApplicationTopic.TopicName }]
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ApplicationDelivery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes]
+                Resource: !GetAtt ApplicationQueue.Arn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref ApplicationTopic
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ApplicationLogGroup.Arn
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-application'
+      RetentionInDays: 30
+  ApplicationWorker:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs22.x
+      Handler: application-consumer.handler
+      LoggingConfig: { LogGroup: !Ref ApplicationLogGroup }
+      Role: !GetAtt ApplicationRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Environment:
+        Variables:
+          APPLICATION_TOPIC_ARN: !Ref ApplicationTopic
+  ApplicationMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt ApplicationQueue.Arn
+      FunctionName: !Ref ApplicationWorker
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+  ApplicationDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt ApplicationDLQ.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  ApplicationFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroup
+      FilterPattern: '"application_event_delivery_failed"'
+      MetricTransformations:
+        - MetricNamespace: WorkflowWakeups
+          MetricName: !Sub '${AWS::StackName}-ApplicationFailure'
+          MetricValue: '1'
+          DefaultValue: 0
+  ApplicationFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: WorkflowWakeups
+      MetricName: !Sub '${AWS::StackName}-ApplicationFailure'
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  ApplicationQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions: [{ Name: QueueName, Value: !GetAtt ApplicationQueue.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  DeferredMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '"workflow_deferred"'
+      MetricTransformations:
+        - MetricNamespace: WorkflowWakeups
+          MetricName: !Sub '${AWS::StackName}-Deferred'
+          MetricValue: '1'
+          DefaultValue: 0
+  DeferredAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: WorkflowWakeups
+      MetricName: !Sub '${AWS::StackName}-Deferred'
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  OrderedDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Join ['', ['subscriber-dlq-', !Select [2, !Split ['/', !Ref 'AWS::StackId']], '.fifo']]
+      FifoQueue: true
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  OrderedQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Join ['', ['subscriber-', !Select [2, !Split ['/', !Ref 'AWS::StackId']], '.fifo']]
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      SqsManagedSseEnabled: true
+      VisibilityTimeout: 360
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy: { deadLetterTargetArn: !GetAtt OrderedDLQ.Arn, maxReceiveCount: 8 }
+  OrderedQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref OrderedQueue]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: sns.amazonaws.com }
+            Action: sqs:SendMessage
+            Resource: !GetAtt OrderedQueue.Arn
+            Condition:
+              ArnEquals: { 'aws:SourceArn': !Ref ApplicationTopic }
+  OrderedSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: OrderedQueuePolicy
+    Properties:
+      TopicArn: !Ref ApplicationTopic
+      Protocol: sqs
+      Endpoint: !GetAtt OrderedQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicy: { ordered: ['true'] }
+  OrderedLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties: { RetentionInDays: 30 }
+  OrderedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OrderedSubscriber
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes]
+                Resource: !GetAtt OrderedQueue.Arn
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem]
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}'
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt OrderedLogGroup.Arn
+  OrderedWorker:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs22.x
+      Handler: ordered-subscriber.handler
+      Role: !GetAtt OrderedRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref CodeKey }
+      LoggingConfig: { LogGroup: !Ref OrderedLogGroup }
+      Environment:
+        Variables: { TABLE_NAME: !Ref TableName, SUBSCRIBER_ID: ha-ordered-lab-transport-v1 }
+  OrderedMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt OrderedQueue.Arn
+      FunctionName: !Ref OrderedWorker
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+  OrderedBlockedMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref OrderedLogGroup
+      FilterPattern: '"ordered_delivery_blocked"'
+      MetricTransformations:
+        - MetricNamespace: WorkflowEvents
+          MetricName: !Sub '${AWS::StackName}-OrderedBlocked'
+          MetricValue: '1'
+          DefaultValue: 0
+  OrderedBlockedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: WorkflowEvents
+      MetricName: !Sub '${AWS::StackName}-OrderedBlocked'
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  OrderedQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions: [{ Name: QueueName, Value: !GetAtt OrderedQueue.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  OrderedDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt OrderedDLQ.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
 Outputs:
   SweeperName:
     Value: !Ref Worker
@@ -416,3 +700,11 @@ Outputs:
   WakeupMappingId: { Value: !Ref QueueMapping }
   WakeupQueueUrl: { Value: !Ref WakeupQueue }
   WakeupDLQUrl: { Value: !Ref ProcessingDLQ }
+  ApplicationQueueUrl: { Value: !Ref ApplicationQueue }
+  ApplicationQueueArn: { Value: !GetAtt ApplicationQueue.Arn }
+  ApplicationTopicArn: { Value: !Ref ApplicationTopic }
+  ApplicationDLQUrl: { Value: !Ref ApplicationDLQ }
+  OrderedQueueUrl: { Value: !Ref OrderedQueue }
+  OrderedDLQUrl: { Value: !Ref OrderedDLQ }
+  ApplicationMappingId: { Value: !Ref ApplicationMapping }
+  OrderedMappingId: { Value: !Ref OrderedMapping }

@@ -1,6 +1,8 @@
 import type { Context, SQSEvent, SQSBatchResponse } from 'aws-lambda'
 import { workflowServices } from './runtime.server'
-import { parseWakeup, processWakeup, wakeupIO } from './wakeups'
+import { required, wakeupIO } from './wakeups'
+import { createWorkflowWorker } from '@ataylorme/tanstack-workflow-aws/wakeups'
+import { createDynamoApplicationEventPublisher } from '@ataylorme/tanstack-workflow-aws/events'
 
 export async function sweep(context: Context) {
   const { store, runtime } = workflowServices()
@@ -16,17 +18,21 @@ export async function sweep(context: Context) {
   return result
 }
 
+let worker: ReturnType<typeof createWorkflowWorker> | undefined
 export async function handler(event: unknown, context: Context) {
-  // Retained only for the migration/rollback rule and explicit operator sweeps.
+  // Operator-only sweep retained for rollback. Legacy drain messages are safe to
+  // consume during upgrade, but all new keyed work uses direct claims, not GSI.
   if (event && typeof event === 'object' && 'kind' in event && event.kind === 'sweep') return sweep(context)
-  if (!event || typeof event !== 'object' || !('Records' in event) || !Array.isArray(event.Records)) {
-    throw new Error('Expected an SQS wakeup batch')
-  }
+  if (!event || typeof event !== 'object' || !('Records' in event) || !Array.isArray(event.Records)) throw new Error('Expected an SQS wakeup batch')
+  worker ??= createWorkflowWorker({ ...workflowServices(), transport: wakeupIO(),
+    publisher: createDynamoApplicationEventPublisher({ tableName: required('TABLE_NAME') }), region: required('AWS_REGION') })
   const batchItemFailures: SQSBatchResponse['batchItemFailures'] = []
   for (const message of (event as SQSEvent).Records) {
     try {
-      if (message.eventSource !== 'aws:sqs' || context.getRemainingTimeInMillis() < 20_000) throw new Error('Invalid message or insufficient budget')
-      await processWakeup(parseWakeup(JSON.parse(message.body)), wakeupIO(), () => sweep(context))
+      const body = JSON.parse(message.body)
+      if (body.version === 1 && body.kind === 'drain') { await sweep(context); continue }
+      const result = await worker({ Records: [message] }, context)
+      batchItemFailures.push(...result.batchItemFailures)
     } catch (error) {
       console.error(JSON.stringify({ kind: 'workflow_wakeup_failed', error: error instanceof Error ? error.name : 'UnknownError' }))
       batchItemFailures.push({ itemIdentifier: message.messageId })

@@ -1,10 +1,10 @@
 {
   "repository": "https://github.com/ataylorme/tanstack-workflow-aws",
   "pullRequest": 4,
-  "commit": "5f2e2b9416049b8173c8d29b8b153dec9a5026ad",
-  "version": "0.2.0-rc.0",
+  "commit": "bfecb80ecf02d1f9630514a082030b63168e1d72",
+  "version": "0.2.0-rc.1",
   "registry": "https://npm.pkg.github.com",
-  "tarball": "https://npm.pkg.github.com/download/@ataylorme/tanstack-workflow-aws/0.2.0-rc.0/7c10ca7babca0cc4144163f66df42e642dc7290d",
-  "integrity": "sha512-nKypbfwLFzcjAmWPLVH3y7S+NfJl399p5OlV0IK7PIzL0/OydW9mQpKCqvIAiQAPDBHXGbBtkGtDHDLlAO6mPw==",
-  "sha256": "ad9e2255e33c21e4330067c194e4aefd7b733b4503aea119edbd8f390f8d2f5c"
+  "tarball": "https://npm.pkg.github.com/download/@ataylorme/tanstack-workflow-aws/0.2.0-rc.1/e781ee3a2888065a3c596b1ee49cef5193a46bcd",
+  "integrity": "sha512-n9WexpvPBdvZs+3tvmk18V0Hx+1yCftq75UdcsAVQWla9mva3kCytjjhpZT7Di85qlumWSUwPc0/9ujqdRpFmg==",
+  "sha256": "fcfacf56d8d984529f6be7697f077136e0491d5fd24d8ee1a67ef7cefbf2b676"
 }

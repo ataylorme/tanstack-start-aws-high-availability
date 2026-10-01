@@ -10,7 +10,9 @@ export default createServerEntry({
           ? (await import('./events/api.server')).applicationEventsApi(request)
           : new URL(request.url).pathname === '/api/application-events/delivery'
             ? (await import('./events/delivery.server')).applicationEventDeliveryApi(request)
-            : handler.fetch(publicRequest(request, process.env)))
+            : new URL(request.url).pathname === '/api/application-events/ordered'
+              ? (await import('./events/ordered.server')).orderedApplicationEventsApi(request)
+              : handler.fetch(publicRequest(request, process.env)))
     const cookie = response.ok ? regionSelectionCookie(request) : undefined
     if (cookie) response.headers.append('set-cookie', cookie)
     response.headers.set('x-served-by-region', process.env.AWS_REGION ?? 'local')

@@ -80,6 +80,21 @@ if (!/^[a-f0-9]{64}$/.test(secret)) throw new Error('Origin secret must be 64 lo
 let workflowToken = ''
 const workflowTable = `${prefix}-workflow`
 if (workflow) {
+  // A stream view change retires its ARN. Require the staged migration to disable
+  // readers first; a normal image update must not silently strand active readers.
+  const existingTables: string[] = JSON.parse(aws('us-east-1', ['dynamodb', 'list-tables', '--query', 'TableNames', '--output', 'json']))
+  if (existingTables.includes(workflowTable)) {
+    const table = JSON.parse(aws('us-east-1', ['dynamodb', 'describe-table', '--table-name', workflowTable, '--output', 'json'])).Table
+    if (table.StreamSpecification?.StreamViewType !== 'NEW_AND_OLD_IMAGES') {
+      for (const region of regions) {
+        const stream = aws(region, ['dynamodb', 'describe-table', '--table-name', workflowTable, '--query', 'Table.LatestStreamArn', '--output', 'text'])
+        const mappings = JSON.parse(aws(region, ['lambda', 'list-event-source-mappings', '--event-source-arn', stream, '--output', 'json'])).EventSourceMappings
+        if (mappings.some((mapping: { State: string }) => mapping.State !== 'Disabled')) {
+          throw new Error('rc.1 stream migration requires deploy-application-events.ts --prepare --execute first; see docs/rc1-lab.md')
+        }
+      }
+    }
+  }
   const tokenFile = resolve(work, 'workflow-test-token')
   if (!existsSync(tokenFile)) {
     for (const region of regions) {
@@ -157,34 +172,44 @@ for (const region of regions) {
   domains.set(region, new URL(output(region, `${prefix}-app`, 'FunctionUrl')).hostname)
 }
 if (workflow) {
-  const sweeperZip = resolve(work, 'workflow-sweeper.zip')
-  rmSync(sweeperZip, { force: true })
-  run('zip', ['-j', '-X', sweeperZip, 'dist/sweeper/sweeper.js', 'dist/sweeper/dispatcher.js'])
-  const sweeperHash = createHash('sha256').update(readFileSync(sweeperZip)).digest('hex')
-  const sweeperKey = `workflow-sweeper/${sweeperHash}.zip`
-  for (const region of regions) {
-    const localBucket = output(region, `${prefix}-bootstrap`, 'ArtifactBucket')
-    aws(region, ['s3', 'cp', sweeperZip, `s3://${localBucket}/${sweeperKey}`])
-    const streamArn = aws(region, ['dynamodb', 'describe-table', '--table-name', workflowTable,
-      '--query', 'Table.LatestStreamArn', '--output', 'text'])
-    if (!streamArn.includes(`:dynamodb:${region}:`)) throw new Error('Missing regional workflow stream')
-    const stacks: string[] = JSON.parse(aws(region, ['cloudformation', 'list-stacks',
-      '--query', "StackSummaries[?StackStatus!='DELETE_COMPLETE'].StackName", '--output', 'json']))
-    // Ordinary app deployments must not accidentally cut over an existing legacy
-    // stack before reconciliation. Dedicated deployment performs that migration.
-    let legacy = 'removed'
-    if (stacks.includes(`${prefix}-sweeper`)) {
-      legacy = aws(region, ['cloudformation', 'describe-stacks', '--stack-name', `${prefix}-sweeper`,
-        '--query', "Stacks[0].Parameters[?ParameterKey=='LegacyScheduleMode'].ParameterValue | [0]", '--output', 'text'])
-      if (legacy === 'None') legacy = 'enabled'
-      if (!['enabled', 'disabled', 'removed'].includes(legacy)) throw new Error('Unexpected legacy schedule mode')
+  const existing = regions.map(region => JSON.parse(aws(region, ['cloudformation', 'list-stacks',
+    '--query', "StackSummaries[?StackStatus!='DELETE_COMPLETE'].StackName", '--output', 'json'])).includes(`${prefix}-sweeper`))
+  if (existing.some(Boolean) && !existing.every(Boolean)) throw new Error('Partial worker deployment: recover both regional stacks before full deployment')
+  if (existing.every(Boolean)) {
+    // Existing stacks go through reviewed change sets and disabled-reader checks.
+    if (process.env.EXPECTED_AWS_ACCOUNT_ID !== account || !process.env.AWS_PROFILE) {
+      throw new Error('Existing worker updates require explicit AWS_PROFILE and matching EXPECTED_AWS_ACCOUNT_ID')
     }
-    deploy(region, `${prefix}-sweeper`, 'infra/workflow-sweeper.yaml', {
-      TableName: workflowTable, CodeBucket: localBucket, CodeKey: sweeperKey,
-      StreamArn: streamArn, LegacyScheduleMode: legacy,
+    const modes = regions.map(region => {
+      const mode = aws(region, ['cloudformation', 'describe-stacks', '--stack-name', `${prefix}-sweeper`,
+        '--query', "Stacks[0].Parameters[?ParameterKey=='LegacyScheduleMode'].ParameterValue | [0]", '--output', 'text'])
+      return mode === 'None' ? 'enabled' : mode
     })
+    if (modes[0] !== modes[1] || !['enabled', 'disabled', 'removed'].includes(modes[0]!)) {
+      throw new Error('Regional legacy modes differ: use the staged worker migration explicitly')
+    }
+    console.log(run('node', ['scripts/deploy-workflow-wakeups.ts', '--execute', `--legacy=${modes[0]}`]))
+  } else {
+    const sweeperZip = resolve(work, 'workflow-sweeper.zip')
+    rmSync(sweeperZip, { force: true })
+    run('zip', ['-j', '-X', sweeperZip, 'dist/sweeper/sweeper.js', 'dist/sweeper/dispatcher.js',
+      'dist/sweeper/application-consumer.js', 'dist/sweeper/ordered-subscriber.js'])
+    const sweeperHash = createHash('sha256').update(readFileSync(sweeperZip)).digest('hex')
+    const sweeperKey = `workflow-sweeper/${sweeperHash}.zip`
+    for (const region of regions) {
+      const localBucket = output(region, `${prefix}-bootstrap`, 'ArtifactBucket')
+      aws(region, ['s3', 'cp', sweeperZip, `s3://${localBucket}/${sweeperKey}`])
+      const streamArn = aws(region, ['dynamodb', 'describe-table', '--table-name', workflowTable,
+        '--query', 'Table.LatestStreamArn', '--output', 'text'])
+      if (!streamArn.includes(`:dynamodb:${region}:`)) throw new Error('Missing regional workflow stream')
+      deploy(region, `${prefix}-sweeper`, 'infra/workflow-sweeper.yaml', {
+        TableName: workflowTable, CodeBucket: localBucket, CodeKey: sweeperKey,
+        StreamArn: streamArn, LegacyScheduleMode: 'removed',
+      })
+    }
   }
 }
+
 const eastDomain = domains.get('us-east-1')
 const westDomain = domains.get('us-west-2')
 if (!eastDomain || !westDomain) throw new Error('Both regional deployments must succeed')

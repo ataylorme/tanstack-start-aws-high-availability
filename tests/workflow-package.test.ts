@@ -4,7 +4,7 @@ import { verifyWorkflowPackage } from '../scripts/workflow-package'
 
 vi.mock('node:fs', () => ({ readFileSync: vi.fn() }))
 const name = '@ataylorme/tanstack-workflow-aws'
-const version = '0.2.0-rc.0'
+const version = '0.2.0-rc.1'
 const artifact = { version, registry: 'https://npm.pkg.github.com', tarball: 'https://npm.pkg.github.com/download/test', integrity: 'sha512-fixture', sha256: 'a'.repeat(64), commit: 'b'.repeat(40), repository: 'https://github.com/ataylorme/tanstack-workflow-aws', pullRequest: 4 }
 let manifest: { dependencies: Record<string, string> }
 let installed: { version: string }
@@ -22,7 +22,7 @@ it('returns provenance only when the exact release, lock and installed version a
   expect(verifyWorkflowPackage()).toEqual(artifact)
 })
 it('rejects a moving or local-file dependency', () => {
-  manifest.dependencies[name] = '^0.2.0-rc.0'
+  manifest.dependencies[name] = '^0.2.0-rc.1'
   expect(() => verifyWorkflowPackage()).toThrow('exact registry release')
 })
 it('rejects an outdated installed package', () => {

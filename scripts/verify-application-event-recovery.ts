@@ -12,9 +12,10 @@ if (!prefix || prefix === 'tanstack-ha' || !/^[a-z][a-z0-9-]{0,39}$/.test(prefix
 }
 if (process.argv.slice(2).some(arg => arg !== '--execute')) throw new Error('Only --execute is supported')
 if (!process.argv.includes('--execute')) {
-  console.log(`Plan only (no AWS calls made): ${prefix} east-only malformed APPLICATION_EVENT INSERT, good-event SQS delivery, bounded 3-minute S3 failure archive inspection, and private Lambda replay of a corrected archived record with the same ID. This is corrected-malformed-record replay, NOT destination-outage replay. Retains table items and archive objects; deletes only matching SQS messages. --execute creates test data and invokes billable resources.`)
+  console.log(`Plan only (no AWS calls made): ${prefix} east-written schemaVersion 1 malformed APPLICATION_EVENT INSERT (replicated to both regions), good-event FIFO → SNS → observation SQS delivery, bounded 5-minute S3 failure archive inspection in east, and private unified-router Lambda replay of a corrected archived record with the same ID. This is corrected-malformed-record replay, NOT destination-outage replay. Retains table items and archive objects; deletes only matching SQS messages. --execute requires AWS_PROFILE and EXPECTED_AWS_ACCOUNT_ID, creates test data and invokes billable resources.`)
   process.exit(0)
 }
+if (!process.env.AWS_PROFILE || !/^\d{12}$/.test(process.env.EXPECTED_AWS_ACCOUNT_ID ?? '')) throw new Error('Execution requires AWS_PROFILE and EXPECTED_AWS_ACCOUNT_ID')
 const artifact = verifyWorkflowPackage()
 const region = 'us-east-1'
 const tableName = `${prefix}-workflow`
@@ -34,20 +35,26 @@ function aws(args: string[]): string {
 const json = (args: string[]) => JSON.parse(aws([...args, '--output', 'json']))
 const pause = () => new Promise(resolve => setTimeout(resolve, 3_000))
 try {
+  assert.equal(aws(['sts', 'get-caller-identity', '--query', 'Account', '--output', 'text']), process.env.EXPECTED_AWS_ACCOUNT_ID, 'AWS account guard failed')
   const table = json(['dynamodb', 'describe-table', '--table-name', tableName]).Table
   assert.equal(table.TableStatus, 'ACTIVE')
   assert.equal(table.MultiRegionConsistency, 'STRONG')
   assert.equal(table.StreamSpecification?.StreamEnabled, true)
-  assert.ok(['NEW_IMAGE', 'NEW_AND_OLD_IMAGES'].includes(table.StreamSpecification?.StreamViewType))
-  const stack = json(['cloudformation', 'describe-stacks', '--stack-name', `${prefix}-application-events`]).Stacks[0]
+  assert.equal(table.StreamSpecification?.StreamViewType, 'NEW_AND_OLD_IMAGES')
+  const stack = json(['cloudformation', 'describe-stacks', '--stack-name', `${prefix}-sweeper`]).Stacks[0]
   const outputs = Object.fromEntries(stack.Outputs.map((item: { OutputKey: string; OutputValue: string }) => [item.OutputKey, item.OutputValue]))
-  for (const key of ['QueueUrl', 'FailureBucketName', 'FunctionArn', 'StreamMappingId']) assert.ok(outputs[key], `Missing ${key}`)
+  const observer = json(['cloudformation', 'describe-stacks', '--stack-name', `${prefix}-application-events`]).Stacks[0]
+  outputs.QueueUrl = observer.Outputs.find((item: { OutputKey: string }) => item.OutputKey === 'QueueUrl')?.OutputValue
+  for (const key of ['QueueUrl', 'FailureBucketName', 'DispatcherFunctionName', 'StreamMappingId']) assert.ok(outputs[key], `Missing ${key}`)
   const mapping = json(['lambda', 'get-event-source-mapping', '--uuid', outputs.StreamMappingId])
   assert.equal(mapping.State, 'Enabled')
   assert.equal(mapping.EventSourceArn, table.LatestStreamArn)
-  assert.equal(mapping.FunctionArn, outputs.FunctionArn)
-  assert.equal(mapping.BatchSize, 1)
-  assert.ok(mapping.MaximumRetryAttempts >= 0 && mapping.MaximumRetryAttempts <= 5, 'Bounded retries required')
+  const router = json(['lambda', 'get-function-configuration', '--function-name', outputs.DispatcherFunctionName])
+  assert.equal(mapping.FunctionArn, router.FunctionArn)
+  assert.equal(router.Handler, 'dispatcher.handler')
+  evidence.routerCodeSha256 = router.CodeSha256
+  assert.equal(mapping.BatchSize, 10)
+  assert.ok(mapping.MaximumRetryAttempts >= 0 && mapping.MaximumRetryAttempts <= 10, 'Bounded retries required')
   assert.equal(mapping.DestinationConfig?.OnFailure?.Destination, `arn:aws:s3:::${outputs.FailureBucketName}`)
   evidence.resources = outputs
   const { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } = await import('@aws-sdk/client-sqs')
@@ -73,12 +80,12 @@ try {
     throw new Error(`Timed out waiting for SQS envelope ${expected.id}`)
   }
   try {
-    const malformed = { PK: { S: `EVENT#${badId}` }, SK: { S: 'META' }, entityType: { S: 'APPLICATION_EVENT' } }
+    const malformed = { PK: { S: `EVENT#${badId}` }, SK: { S: 'META' }, schemaVersion: { N: '1' }, entityType: { S: 'APPLICATION_EVENT' } }
     aws(['dynamodb', 'put-item', '--table-name', tableName, '--item', JSON.stringify(malformed), '--condition-expression', 'attribute_not_exists(PK)'])
     const good = await createDynamoApplicationEventPublisher({ tableName }).publish({ id: `${runId}-good`, type: 'ha.validation.recovery', data: { message: 'unblocked good record' } })
     evidence.goodEnvelope = await receive(good)
     outcomes.push({ scenario: 'good-event delivery despite malformed stream record', passed: true })
-    const deadline = Date.now() + 180_000
+    const deadline = Date.now() + 300_000
     let archivedRecord: any
     let archiveObject: unknown
     const inspected = new Set<string>()
@@ -106,7 +113,7 @@ try {
       }
       if (!archivedRecord) await pause()
     }
-    assert.ok(archivedRecord, 'No full malformed record found in S3 archive within three minutes')
+    assert.ok(archivedRecord, 'No full malformed record found in S3 archive within five minutes')
     evidence.archive = archiveObject
     outcomes.push({ scenario: 'full original malformed record retained in S3 failure archive', passed: true })
     const corrected = { id: badId, type: 'ha.validation.corrected-replay', version: 1, timestamp: new Date().toISOString(), data: { message: 'manually corrected archived malformed record' } }
@@ -118,12 +125,12 @@ try {
     const payloadFile = resolve(work, 'replay.json')
     const responseFile = resolve(work, 'response.json')
     writeFileSync(payloadFile, JSON.stringify({ Records: [replay] }), { mode: 0o600 })
-    const invocation = json(['lambda', 'invoke', '--function-name', outputs.FunctionArn, '--invocation-type', 'RequestResponse', '--payload', `fileb://${payloadFile}`, responseFile])
+    const invocation = json(['lambda', 'invoke', '--function-name', outputs.DispatcherFunctionName, '--invocation-type', 'RequestResponse', '--payload', `fileb://${payloadFile}`, responseFile])
     assert.equal(invocation.StatusCode, 200)
     assert.equal(invocation.FunctionError, undefined)
     assert.deepEqual(JSON.parse(readFileSync(responseFile, 'utf8')), { batchItemFailures: [] })
     evidence.correctedReplayEnvelope = await receive(corrected)
-    outcomes.push({ scenario: 'private Lambda replay of corrected archived record with same ID and full SQS envelope', passed: true })
+    outcomes.push({ scenario: 'private unified-router replay of corrected archived record with same ID through FIFO, SNS and observation SQS', passed: true })
   } finally { sqs.destroy() }
 } catch (error) {
   outcomes.push({ scenario: 'failure', passed: false, detail: error instanceof Error ? error.message : String(error) })

@@ -1,5 +1,9 @@
 # PR #4 application-event integration lab
 
+> **rc.1:** See [the current upgrade/feature guide](rc1-lab.md) for unified routing,
+> ordered delivery and staged migration. Architecture and validation below describe
+> the prior integration where explicitly noted.
+
 Branch: `test/tanstack-workflow-aws`. The application-event integration was merged
 into this branch. This lab is separate from workflow replay events and workflow wakeups.
 Application events already use demand-driven stream delivery; publishing one does not
@@ -8,7 +12,7 @@ regional stream → dispatcher → one-time Scheduler/SQS → sweeper path.
 
 ## Published package and reproducibility
 
-This branch pins **`@ataylorme/tanstack-workflow-aws@0.2.0-rc.0`** from GitHub
+This branch pins **`@ataylorme/tanstack-workflow-aws@0.2.0-rc.1`** from GitHub
 Packages, not a local tarball or moving branch. `package-lock.json` fixes the registry
 artifact and SHA-512 integrity. `src/events/package-provenance.json` records the
 upstream PR #4 source commit, registry URL, and package checksums. Both the app image
@@ -19,14 +23,13 @@ that the manifest, lockfile, installed version, and provenance agree before AWS 
 Docker uses the existing GitHub Packages BuildKit secret; it no longer copies a
 vendored package. Follow the workflow runbook's package authentication instructions.
 
-The published tarball is byte-for-byte identical to the candidate previously tested
-on AWS. The upstream MIT license remains in the installed package and
+The exact rc.1 tarball checksum is recorded in package provenance. Historical rc.0
+evidence does not qualify this release. The upstream MIT license remains in the installed package and
 `third-party/tanstack-workflow-aws-LICENSE`.
 
-**Registry caveat:** this prerelease's default GitHub Packages installation also
-installs the EventBridge and SNS SDK peers, despite optional-peer flags in the
-package itself. SQS is the only bridge SDK explicitly selected by this application;
-the lockfile captures the additional registry-resolved dependencies.
+**Registry caveat:** GitHub Packages may install optional bridge peers. This app
+explicitly selects SQS, SNS and Scheduler SDKs for its deployed transport; the lockfile
+records all registry-resolved dependencies.
 
 ## Architecture and boundaries
 
@@ -37,14 +40,18 @@ the lockfile captures the additional registry-resolved dependencies.
   after response loss; the committed envelope and timestamp are returned. Changed
   content returns `409`; uncertain persistence returns `503` and requests same-ID retry.
 - Both regional apps publish to the isolated MRSC table (Ohio witness).
-  `NEW_IMAGE` streams expose immutable application-event records.
-- Exactly one private reader in east forwards matching INSERTs to a dedicated
-  standard SQS queue. Internal workflow events are filtered out. No public Lambda URL.
-- One-record batches, partial batch responses, bounded retries, an encrypted private
+  `NEW_AND_OLD_IMAGES` streams expose immutable records and committed ordered heads.
+- One private unified reader per replica routes workflow/cleanup/outbox obligations
+  and application events independently. Application FIFO queues relay to SNS FIFO.
+  The retained east standard observation queue subscribes to the east topic. The old
+  dedicated event reader is disabled. No worker has a public Lambda URL.
+- Bounded batches, partial batch responses, bounded retries, an encrypted private
   S3 failure archive (30-day expiration), retained logs, and delivery/backlog/runtime/
   archive alarms make failures inspectable. Alarms have no notification subscription.
-- Delivery is at least once and unordered. This queue is a test receiver, not an
-  idempotent business consumer. No transactional application outbox is claimed.
+- Unordered delivery remains at least once. The observation queue is only a test
+  receiver. Ordered subscribers use retained logs and shared cursors, not queue FIFO
+  alone, to gate callbacks. Workflows use the committed publication helper for durable
+  outbox intents; arbitrary business writes plus publication are not an atomic outbox.
 
 ## Test from the browser
 
@@ -84,6 +91,7 @@ existing nine-stack workflow lab plus one application-events stack).
 
 ```sh
 export AWS_PROFILE=your-sandbox-profile
+export EXPECTED_AWS_ACCOUNT_ID=YOUR_SANDBOX_ACCOUNT_ID
 export STACK_PREFIX=event-lab-example
 export ENABLE_WORKFLOW_TESTS=true
 export ECR_UPLOAD_MODE=api
@@ -133,12 +141,21 @@ node scripts/verify-application-event-recovery.ts           # offline plan
 node scripts/verify-application-event-recovery.ts --execute
 ```
 
-With the same isolated prefix/profile, this validates the live mapping, inserts one
-malformed test record, observes a separate good event arriving, locates the complete
-malformed INSERT in the private S3 archive, and invokes the private Lambda with a
-corrected copy preserving its ID. It asserts both an empty partial-failure response
-and the full corrected envelope arriving in SQS. The original table item and archive
-are retained unchanged. Evidence is private under `.deploy/event-results/`.
+Execution requires the isolated `STACK_PREFIX`, `AWS_PROFILE`, and a 12-digit
+`EXPECTED_AWS_ACCOUNT_ID`; the caller identity is checked before any AWS mutation.
+The rc.1 runner validates the active unified router in `${STACK_PREFIX}-sweeper`,
+including the `NEW_AND_OLD_IMAGES` stream, batch size 10, bounded retries and S3
+failure destination. The disabled legacy bridge is never invoked.
+
+It inserts one malformed **schemaVersion 1** application-event record in east
+(replication also exercises the west router), observes a separate good event, and
+polls the east S3 archive for up to five minutes. It then invokes the private unified
+router with a corrected copy preserving the archived event ID. The test asserts an
+empty partial-failure response and the full corrected envelope arriving through the
+application FIFO queue → SNS FIFO topic → retained standard observation queue.
+Only this drill's matching observation messages are deleted. The original malformed
+table item and archive remain unchanged, so later replay of the original still fails.
+Evidence is private under `.deploy/event-results/`.
 
 This proves corrected-malformed-record replay, **not** destination-outage recovery,
 same-shard ordering/progress, alarm transitions, or business-effect idempotency.

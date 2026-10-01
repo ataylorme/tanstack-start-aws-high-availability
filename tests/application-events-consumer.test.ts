@@ -44,7 +44,7 @@ describe('real application-event consumer with mocked SQS transport', () => {
     expect(command).toBeInstanceOf(SendMessageCommand)
     expect(command.input.QueueUrl).toBe(queueUrl)
     expect(JSON.parse(command.input.MessageBody!)).toEqual(envelope)
-    expect(command.input.MessageAttributes).toEqual({ eventType: { DataType: 'String', StringValue: envelope.type } })
+    expect(command.input.MessageAttributes).toEqual({ eventType: { DataType: 'String', StringValue: envelope.type }, ordered: { DataType: 'String', StringValue: 'false' } })
     expect(command.input.MessageDeduplicationId).toBeUndefined()
   })
   it('ignores internal records and non-INSERT application records', async () => {

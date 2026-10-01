@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Isolated PR4 application-event stream-to-SQS bridge; separate from workflow wakeups. Deploy once in us-east-1 only.
+Description: Retained legacy bridge and observation queue; unified regional routers own stream delivery.
 Parameters:
   StreamArn:
     Type: String
@@ -7,6 +7,11 @@ Parameters:
     Description: Regional DynamoDB Stream ARN, not the table ARN
   CodeBucket: { Type: String, Description: Regional S3 bucket containing the bundled bridge Lambda ZIP }
   CodeKey: { Type: String, Description: Immutable content-addressed ZIP key containing handler.js }
+  LegacyReaderEnabled: { Type: String, Default: 'false', AllowedValues: ['true', 'false'] }
+  ApplicationTopicArn: { Type: String, Default: '' }
+Conditions:
+  EnableLegacyReader: !Equals [!Ref LegacyReaderEnabled, 'true']
+  HasApplicationTopic: !Not [!Equals [!Ref ApplicationTopicArn, '']]
 Resources:
   DestinationQueue:
     Type: AWS::SQS::Queue
@@ -81,6 +86,7 @@ Resources:
   StreamMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
+      Enabled: !If [EnableLegacyReader, true, false]
       EventSourceArn: !Ref StreamArn
       FunctionName: !Ref BridgeFunction
       StartingPosition: TRIM_HORIZON
@@ -152,6 +158,29 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+  ObservationQueuePolicy:
+    Condition: HasApplicationTopic
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref DestinationQueue]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: sns.amazonaws.com }
+            Action: sqs:SendMessage
+            Resource: !GetAtt DestinationQueue.Arn
+            Condition:
+              ArnEquals: { 'aws:SourceArn': !Ref ApplicationTopicArn }
+  ObservationSubscription:
+    Condition: HasApplicationTopic
+    Type: AWS::SNS::Subscription
+    DependsOn: ObservationQueuePolicy
+    Properties:
+      TopicArn: !Ref ApplicationTopicArn
+      Protocol: sqs
+      Endpoint: !GetAtt DestinationQueue.Arn
+      RawMessageDelivery: true
 Outputs:
   QueueUrl: { Value: !Ref DestinationQueue }
   QueueArn: { Value: !GetAtt DestinationQueue.Arn }

@@ -1,3 +1,4 @@
+import { OrderedEventLab } from './OrderedEventLab'
 import { useState } from 'react'
 import { eventEnvelope, eventRequest, oppositeRegion, sameEvent, type EventRegion, type TestEventInput, type TestEventEnvelope } from '../events/lab-client'
 
@@ -94,5 +95,6 @@ export function ApplicationEventLab() {
     <p role="status" aria-live="polite" aria-atomic="true">{notice}</p>
     <details><summary>Latest response (status, serving region, envelope)</summary><pre>{result}</pre></details>
     <p className="event-help">Delivery checks sample up to ten messages in the dedicated test queue and may hide them for five seconds. They never delete messages. Another test runner may already have consumed an event; not observed is inconclusive. Delivery is at least once. No fault injection or business side effects are triggered here.</p>
+    <OrderedEventLab token={token} region={region} />
   </section>
 }
