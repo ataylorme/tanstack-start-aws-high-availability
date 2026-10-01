@@ -50,3 +50,22 @@ describe('abandoned workflow verification safeguards', () => {
     expect(source).not.toMatch(/\.sweep\(|deleteRun\(|delete-item/)
   })
 })
+
+it('guards regional isolation and checkpoints restoration before changing mappings', () => {
+  expect(recovery).toContain('Explicit AWS_PROFILE required')
+  expect(recovery).toContain('EXPECTED_AWS_ACCOUNT_ID required')
+  expect(recovery.indexOf("'AWS account mismatch'")).toBeLessThan(recovery.indexOf("'--no-enabled'"))
+  expect(recovery.indexOf('save() // Record the exact mapping')).toBeLessThan(recovery.indexOf("'--no-enabled'"))
+  expect(recovery).toContain('attempt.restored = true')
+  expect(recovery).toContain('Exactly two committed timer resolutions')
+})
+
+it('restores regional mappings after handled termination and retries transient restoration errors', () => {
+  expect(recovery).toContain("['SIGINT', 'SIGTERM']")
+  expect(recovery).toContain('if (interrupted && !restoring) throw')
+  expect(recovery).toMatch(/await setTimeout\(65_000\)\s+checkInterrupted\(\)/)
+  expect(recovery).toMatch(/finally\s*\{\s*restoring = true/)
+  expect(recovery).toContain('retry < 3')
+  expect(recovery).toContain('Restoration failed:')
+  expect(recovery).toMatch(/save\(\)\s+restoring = false\s+if \(restorationError\) throw restorationError/)
+})
