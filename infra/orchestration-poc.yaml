@@ -1,0 +1,1764 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Independent single-region DevOps orchestration POC. JSON is valid YAML.",
+  "Parameters": {
+    "ImageUri": {
+      "Type": "String",
+      "AllowedPattern": ".+@sha256:[a-f0-9]{64}"
+    },
+    "RequesterToken": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 32
+    },
+    "ApproverToken": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 32
+    }
+  },
+  "Resources": {
+    "WorkflowTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "devops-orchestration-poc-workflow",
+        "BillingMode": "PAY_PER_REQUEST",
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "StreamSpecification": {
+          "StreamViewType": "NEW_AND_OLD_IMAGES"
+        },
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "PK",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "SK",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "duePK",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "dueSK",
+            "AttributeType": "N"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "PK",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "SK",
+            "KeyType": "RANGE"
+          }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "DueIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "duePK",
+                "KeyType": "HASH"
+              },
+              {
+                "AttributeName": "dueSK",
+                "KeyType": "RANGE"
+              }
+            ],
+            "Projection": {
+              "ProjectionType": "KEYS_ONLY"
+            }
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "OperationsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "devops-orchestration-poc-operations",
+        "BillingMode": "PAY_PER_REQUEST",
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "PK",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "SK",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "PK",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "SK",
+            "KeyType": "RANGE"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "WakeupDLQ": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "devops-orchestration-poc-wakeupdlq",
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 720
+      }
+    },
+    "WakeupDLQAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "WakeupDLQ",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "SchedulerDLQ": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "devops-orchestration-poc-schedulerdlq",
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 720
+      }
+    },
+    "SchedulerDLQAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "SchedulerDLQ",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "StreamDLQ": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "devops-orchestration-poc-streamdlq",
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 720
+      }
+    },
+    "StreamDLQAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "StreamDLQ",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "ApplicationDLQ": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "devops-orchestration-poc-applicationdlq.fifo",
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 720,
+        "FifoQueue": true,
+        "ContentBasedDeduplication": false
+      }
+    },
+    "ApplicationDLQAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "ApplicationDLQ",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "ObservationDLQ": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "devops-orchestration-poc-observationdlq.fifo",
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 720,
+        "FifoQueue": true,
+        "ContentBasedDeduplication": false
+      }
+    },
+    "ObservationDLQAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "ObservationDLQ",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "WakeupQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "devops-orchestration-poc-wakeupqueue",
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 720,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "WakeupDLQ",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 8
+        }
+      }
+    },
+    "WakeupQueueAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "WakeupQueue",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 300,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "ApplicationQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "devops-orchestration-poc-applicationqueue.fifo",
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 720,
+        "FifoQueue": true,
+        "ContentBasedDeduplication": false,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "ApplicationDLQ",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 8
+        }
+      }
+    },
+    "ApplicationQueueAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "ApplicationQueue",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 300,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "ObservationQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "devops-orchestration-poc-observationqueue.fifo",
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 720,
+        "FifoQueue": true,
+        "ContentBasedDeduplication": false,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "ObservationDLQ",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 8
+        }
+      }
+    },
+    "ObservationQueueAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "ObservationQueue",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 300,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "ScheduleGroup": {
+      "Type": "AWS::Scheduler::ScheduleGroup",
+      "Properties": {
+        "Name": "devops-orchestration-poc"
+      }
+    },
+    "SchedulerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "scheduler.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Fn::GetAtt": [
+                      "ScheduleGroup",
+                      "Arn"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ScopedAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "WakeupQueue",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "SchedulerDLQ",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ApplicationTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "devops-orchestration-poc-events.fifo",
+        "FifoTopic": true,
+        "ContentBasedDeduplication": false
+      }
+    },
+    "ObservationQueuePolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "Queues": [
+          {
+            "Ref": "ObservationQueue"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "sqs:SendMessage",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ObservationQueue",
+                  "Arn"
+                ]
+              },
+              "Principal": {
+                "Service": "sns.amazonaws.com"
+              },
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Ref": "ApplicationTopic"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ObservationSubscription": {
+      "Type": "AWS::SNS::Subscription",
+      "Properties": {
+        "TopicArn": {
+          "Ref": "ApplicationTopic"
+        },
+        "Protocol": "sqs",
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "ObservationQueue",
+            "Arn"
+          ]
+        },
+        "RawMessageDelivery": true
+      },
+      "DependsOn": "ObservationQueuePolicy"
+    },
+    "HttpLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/devops-orchestration-poc-http",
+        "RetentionInDays": 14
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "HttpRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ScopedAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "HttpLogs",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                    "dynamodb:Scan",
+                    "dynamodb:ConditionCheckItem",
+                    "dynamodb:BatchGetItem",
+                    "dynamodb:BatchWriteItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "WorkflowTable",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::Sub": "${WorkflowTable.Arn}/index/DueIndex"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "HttpFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "devops-orchestration-poc-http",
+        "PackageType": "Image",
+        "Architectures": [
+          "x86_64"
+        ],
+        "Code": {
+          "ImageUri": {
+            "Ref": "ImageUri"
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "HttpRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 60,
+        "MemorySize": 512,
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "HttpLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "APP_MODE": "orchestration",
+            "APP_ROLE": "http",
+            "AWS_LWA_PASS_THROUGH_PATH": "/internal/events",
+            "WORKFLOW_TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "OPERATIONS_TABLE_NAME": {
+              "Ref": "OperationsTable"
+            },
+            "SANDBOX_FUNCTION_NAME": "devops-orchestration-poc-sandbox",
+            "EXECUTOR_FUNCTION_NAME": "devops-orchestration-poc-executor",
+            "REQUESTER_TOKEN": {
+              "Ref": "RequesterToken"
+            },
+            "APPROVER_TOKEN": {
+              "Ref": "ApproverToken"
+            },
+            "RELEASE_ID": {
+              "Ref": "ImageUri"
+            }
+          }
+        }
+      }
+    },
+    "HttpErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "HttpFunction"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "RouterLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/devops-orchestration-poc-router",
+        "RetentionInDays": 14
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RouterRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ScopedAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "RouterLogs",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "scheduler:CreateSchedule",
+                    "scheduler:GetSchedule"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ScheduleGroup}/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SchedulerRole",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "scheduler.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:DescribeStream",
+                    "dynamodb:GetRecords",
+                    "dynamodb:GetShardIterator",
+                    "dynamodb:ListStreams"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "WorkflowTable",
+                      "StreamArn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "dynamodb:GetItem",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "WorkflowTable",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "WakeupQueue",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "ApplicationQueue",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "StreamDLQ",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "RouterFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "devops-orchestration-poc-router",
+        "PackageType": "Image",
+        "Architectures": [
+          "x86_64"
+        ],
+        "Code": {
+          "ImageUri": {
+            "Ref": "ImageUri"
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "RouterRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 60,
+        "MemorySize": 512,
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "RouterLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "APP_MODE": "orchestration",
+            "APP_ROLE": "router",
+            "AWS_LWA_PASS_THROUGH_PATH": "/internal/events",
+            "AWS_LWA_ERROR_STATUS_CODES": "400-599",
+            "WORKFLOW_TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "OPERATIONS_TABLE_NAME": {
+              "Ref": "OperationsTable"
+            },
+            "SANDBOX_FUNCTION_NAME": "devops-orchestration-poc-sandbox",
+            "EXECUTOR_FUNCTION_NAME": "devops-orchestration-poc-executor",
+            "WAKEUP_QUEUE_URL": {
+              "Ref": "WakeupQueue"
+            },
+            "WAKEUP_QUEUE_ARN": {
+              "Fn::GetAtt": [
+                "WakeupQueue",
+                "Arn"
+              ]
+            },
+            "SCHEDULE_GROUP": {
+              "Ref": "ScheduleGroup"
+            },
+            "SCHEDULER_ROLE_ARN": {
+              "Fn::GetAtt": [
+                "SchedulerRole",
+                "Arn"
+              ]
+            },
+            "SCHEDULER_DLQ_ARN": {
+              "Fn::GetAtt": [
+                "SchedulerDLQ",
+                "Arn"
+              ]
+            },
+            "APPLICATION_QUEUE_URL": {
+              "Ref": "ApplicationQueue"
+            },
+            "RELEASE_ID": {
+              "Ref": "ImageUri"
+            }
+          }
+        }
+      }
+    },
+    "RouterErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "RouterFunction"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "WorkerLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/devops-orchestration-poc-worker",
+        "RetentionInDays": 14
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "WorkerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ScopedAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "WorkerLogs",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                    "dynamodb:Scan",
+                    "dynamodb:ConditionCheckItem",
+                    "dynamodb:BatchGetItem",
+                    "dynamodb:BatchWriteItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "WorkflowTable",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::Sub": "${WorkflowTable.Arn}/index/DueIndex"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "scheduler:CreateSchedule",
+                    "scheduler:GetSchedule"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ScheduleGroup}/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SchedulerRole",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "scheduler.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:GetQueueAttributes"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "WakeupQueue",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "WakeupQueue",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "lambda:InvokeFunction",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:devops-orchestration-poc-executor"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "lambda:GetFunctionConcurrency",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:devops-orchestration-poc-sandbox"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "WorkerFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "devops-orchestration-poc-worker",
+        "PackageType": "Image",
+        "Architectures": [
+          "x86_64"
+        ],
+        "Code": {
+          "ImageUri": {
+            "Ref": "ImageUri"
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "WorkerRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 120,
+        "MemorySize": 512,
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "WorkerLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "APP_MODE": "orchestration",
+            "APP_ROLE": "worker",
+            "AWS_LWA_PASS_THROUGH_PATH": "/internal/events",
+            "AWS_LWA_ERROR_STATUS_CODES": "400-599",
+            "WORKFLOW_TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "OPERATIONS_TABLE_NAME": {
+              "Ref": "OperationsTable"
+            },
+            "SANDBOX_FUNCTION_NAME": "devops-orchestration-poc-sandbox",
+            "EXECUTOR_FUNCTION_NAME": "devops-orchestration-poc-executor",
+            "WAKEUP_QUEUE_URL": {
+              "Ref": "WakeupQueue"
+            },
+            "WAKEUP_QUEUE_ARN": {
+              "Fn::GetAtt": [
+                "WakeupQueue",
+                "Arn"
+              ]
+            },
+            "SCHEDULE_GROUP": {
+              "Ref": "ScheduleGroup"
+            },
+            "SCHEDULER_ROLE_ARN": {
+              "Fn::GetAtt": [
+                "SchedulerRole",
+                "Arn"
+              ]
+            },
+            "SCHEDULER_DLQ_ARN": {
+              "Fn::GetAtt": [
+                "SchedulerDLQ",
+                "Arn"
+              ]
+            },
+            "APPLICATION_QUEUE_URL": {
+              "Ref": "ApplicationQueue"
+            },
+            "RELEASE_ID": {
+              "Ref": "ImageUri"
+            }
+          }
+        }
+      }
+    },
+    "WorkerErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "WorkerFunction"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "ExecutorLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/devops-orchestration-poc-executor",
+        "RetentionInDays": 14
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ExecutorRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ScopedAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ExecutorLogs",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:Query"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "WorkflowTable",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:ConditionCheckItem"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "OperationsTable",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:GetFunctionConcurrency",
+                    "lambda:PutFunctionConcurrency"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:devops-orchestration-poc-sandbox"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ExecutorFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "devops-orchestration-poc-executor",
+        "PackageType": "Image",
+        "Architectures": [
+          "x86_64"
+        ],
+        "Code": {
+          "ImageUri": {
+            "Ref": "ImageUri"
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "ExecutorRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 30,
+        "MemorySize": 512,
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "ExecutorLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "APP_MODE": "orchestration",
+            "APP_ROLE": "executor",
+            "AWS_LWA_PASS_THROUGH_PATH": "/internal/events",
+            "AWS_LWA_ERROR_STATUS_CODES": "400-599",
+            "WORKFLOW_TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "OPERATIONS_TABLE_NAME": {
+              "Ref": "OperationsTable"
+            },
+            "SANDBOX_FUNCTION_NAME": "devops-orchestration-poc-sandbox",
+            "EXECUTOR_FUNCTION_NAME": "devops-orchestration-poc-executor",
+            "RELEASE_ID": {
+              "Ref": "ImageUri"
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 1
+      }
+    },
+    "ExecutorErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "ExecutorFunction"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "RelayLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/devops-orchestration-poc-relay",
+        "RetentionInDays": 14
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RelayRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ScopedAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "RelayLogs",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:GetQueueAttributes"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ApplicationQueue",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sns:Publish",
+                  "Resource": {
+                    "Ref": "ApplicationTopic"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "RelayFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "devops-orchestration-poc-relay",
+        "PackageType": "Image",
+        "Architectures": [
+          "x86_64"
+        ],
+        "Code": {
+          "ImageUri": {
+            "Ref": "ImageUri"
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "RelayRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 60,
+        "MemorySize": 512,
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "RelayLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "APP_MODE": "orchestration",
+            "APP_ROLE": "relay",
+            "AWS_LWA_PASS_THROUGH_PATH": "/internal/events",
+            "AWS_LWA_ERROR_STATUS_CODES": "400-599",
+            "WORKFLOW_TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "TABLE_NAME": {
+              "Ref": "WorkflowTable"
+            },
+            "OPERATIONS_TABLE_NAME": {
+              "Ref": "OperationsTable"
+            },
+            "SANDBOX_FUNCTION_NAME": "devops-orchestration-poc-sandbox",
+            "EXECUTOR_FUNCTION_NAME": "devops-orchestration-poc-executor",
+            "APPLICATION_TOPIC_ARN": {
+              "Ref": "ApplicationTopic"
+            },
+            "RELEASE_ID": {
+              "Ref": "ImageUri"
+            }
+          }
+        }
+      }
+    },
+    "RelayErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "RelayFunction"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "SandboxLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/devops-orchestration-poc-sandbox",
+        "RetentionInDays": 14
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "SandboxRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ScopedAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SandboxLogs",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "SandboxFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "devops-orchestration-poc-sandbox",
+        "PackageType": "Image",
+        "Architectures": [
+          "x86_64"
+        ],
+        "Code": {
+          "ImageUri": {
+            "Ref": "ImageUri"
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "SandboxRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 60,
+        "MemorySize": 512,
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "SandboxLogs"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "APP_MODE": "orchestration",
+            "APP_ROLE": "sandbox",
+            "AWS_LWA_PASS_THROUGH_PATH": "/internal/events",
+            "AWS_LWA_ERROR_STATUS_CODES": "400-599",
+            "RELEASE_ID": {
+              "Ref": "ImageUri"
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 1
+      }
+    },
+    "SandboxErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "SandboxFunction"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "HttpUrl": {
+      "Type": "AWS::Lambda::Url",
+      "Properties": {
+        "TargetFunctionArn": {
+          "Ref": "HttpFunction"
+        },
+        "AuthType": "NONE",
+        "InvokeMode": "BUFFERED"
+      }
+    },
+    "HttpUrlPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunctionUrl",
+        "FunctionName": {
+          "Ref": "HttpFunction"
+        },
+        "Principal": "*",
+        "FunctionUrlAuthType": "NONE"
+      }
+    },
+    "HttpInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "HttpFunction"
+        },
+        "Principal": "*",
+        "InvokedViaFunctionUrl": true
+      }
+    },
+    "StreamMapping": {
+      "Type": "AWS::Lambda::EventSourceMapping",
+      "Properties": {
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "WorkflowTable",
+            "StreamArn"
+          ]
+        },
+        "FunctionName": {
+          "Ref": "RouterFunction"
+        },
+        "StartingPosition": "TRIM_HORIZON",
+        "BatchSize": 10,
+        "MaximumRetryAttempts": 5,
+        "MaximumRecordAgeInSeconds": 3600,
+        "BisectBatchOnFunctionError": true,
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures"
+        ],
+        "DestinationConfig": {
+          "OnFailure": {
+            "Destination": {
+              "Fn::GetAtt": [
+                "StreamDLQ",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "WorkerMapping": {
+      "Type": "AWS::Lambda::EventSourceMapping",
+      "Properties": {
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "WakeupQueue",
+            "Arn"
+          ]
+        },
+        "FunctionName": {
+          "Ref": "WorkerFunction"
+        },
+        "BatchSize": 1,
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures"
+        ]
+      }
+    },
+    "RelayMapping": {
+      "Type": "AWS::Lambda::EventSourceMapping",
+      "Properties": {
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "ApplicationQueue",
+            "Arn"
+          ]
+        },
+        "FunctionName": {
+          "Ref": "RelayFunction"
+        },
+        "BatchSize": 1,
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures"
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "WorkflowTable": {
+      "Value": {
+        "Ref": "WorkflowTable"
+      }
+    },
+    "OperationsTable": {
+      "Value": {
+        "Ref": "OperationsTable"
+      }
+    },
+    "WakeupQueue": {
+      "Value": {
+        "Ref": "WakeupQueue"
+      }
+    },
+    "WakeupDLQ": {
+      "Value": {
+        "Ref": "WakeupDLQ"
+      }
+    },
+    "SchedulerDLQ": {
+      "Value": {
+        "Ref": "SchedulerDLQ"
+      }
+    },
+    "StreamDLQ": {
+      "Value": {
+        "Ref": "StreamDLQ"
+      }
+    },
+    "ScheduleGroup": {
+      "Value": {
+        "Ref": "ScheduleGroup"
+      }
+    },
+    "ApplicationQueue": {
+      "Value": {
+        "Ref": "ApplicationQueue"
+      }
+    },
+    "ApplicationTopic": {
+      "Value": {
+        "Ref": "ApplicationTopic"
+      }
+    },
+    "ObservationQueue": {
+      "Value": {
+        "Ref": "ObservationQueue"
+      }
+    },
+    "StreamMapping": {
+      "Value": {
+        "Ref": "StreamMapping"
+      }
+    },
+    "WorkerMapping": {
+      "Value": {
+        "Ref": "WorkerMapping"
+      }
+    },
+    "RelayMapping": {
+      "Value": {
+        "Ref": "RelayMapping"
+      }
+    },
+    "HttpFunctionName": {
+      "Value": {
+        "Ref": "HttpFunction"
+      }
+    },
+    "RouterFunctionName": {
+      "Value": {
+        "Ref": "RouterFunction"
+      }
+    },
+    "WorkerFunctionName": {
+      "Value": {
+        "Ref": "WorkerFunction"
+      }
+    },
+    "ExecutorFunctionName": {
+      "Value": {
+        "Ref": "ExecutorFunction"
+      }
+    },
+    "RelayFunctionName": {
+      "Value": {
+        "Ref": "RelayFunction"
+      }
+    },
+    "SandboxFunctionName": {
+      "Value": {
+        "Ref": "SandboxFunction"
+      }
+    },
+    "Url": {
+      "Value": {
+        "Fn::GetAtt": [
+          "HttpUrl",
+          "FunctionUrl"
+        ]
+      }
+    }
+  }
+}

@@ -10,3 +10,5 @@ coverage
 dist
 
 .venv
+
+.event-test-results

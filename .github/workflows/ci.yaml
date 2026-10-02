@@ -19,6 +19,13 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run smoke
+      - name: POC durable recovery against DynamoDB Local
+        run: |
+          node scripts/orchestration-local.ts --init-only
+          DYNAMODB_LOCAL_ENDPOINT=http://127.0.0.1:8000 npx vitest run tests/orchestration-local.test.ts
+      - name: Stop local POC database
+        if: always()
+        run: docker compose -f compose.orchestration.yaml down
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

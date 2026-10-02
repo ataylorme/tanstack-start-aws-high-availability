@@ -208,3 +208,12 @@ confuse those with a failed build. Revalidate updates before changing pinned ver
 - [Lambda@Edge restrictions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-at-edge-function-restrictions.html)
 - [Edge header restrictions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html)
 - [Function URL access and both required invocation permissions](https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html)
+
+## Separate DevOps orchestration POC
+
+The [orchestration POC runbook](docs/orchestration-poc.md) describes an isolated,
+single-region task platform: immutable plans, approval, immediate/one-time scheduled
+sandbox Lambda capacity changes, durable recovery, and independent SNS events.
+It uses one container image across six permission-scoped roles and does **not** share
+or deploy the HA lab's stacks. Start locally with `node scripts/orchestration-local.ts`;
+AWS deployment is separately guarded and defaults to an offline plan.

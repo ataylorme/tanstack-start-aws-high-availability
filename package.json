@@ -17,11 +17,17 @@
     "build:edge": "tsc -p edge/tsconfig.json",
     "test:watch": "vitest",
     "build:sweeper": "esbuild src/workflows/sweeper.ts src/workflows/dispatcher.ts src/workflows/application-consumer.ts src/events/ordered-subscriber.ts --bundle --platform=node --target=node22 --format=cjs --entry-names=[name] --outdir=dist/sweeper",
-    "build:events": "esbuild src/events/consumer.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/events/handler.js"
+    "build:events": "esbuild src/events/consumer.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/events/handler.js",
+    "dev:poc": "node scripts/orchestration-local.ts",
+    "test:poc": "vitest run tests/orchestration-*.test.ts",
+    "deploy:poc": "node scripts/deploy-orchestration.ts",
+    "cleanup:poc": "node scripts/cleanup-orchestration.ts",
+    "verify:poc": "node scripts/verify-orchestration.ts"
   },
   "dependencies": {
     "@ataylorme/tanstack-workflow-aws": "0.2.0-rc.1",
     "@aws-sdk/client-dynamodb": "3.1136.0",
+    "@aws-sdk/client-lambda": "3.1136.0",
     "@aws-sdk/client-scheduler": "3.1136.0",
     "@aws-sdk/client-sns": "3.1141.0",
     "@aws-sdk/client-sqs": "3.1141.0",
@@ -38,7 +44,9 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "aws-sdk-client-mock": "4.1.0",
     "esbuild": "0.28.2",
+    "nock": "14.0.17",
     "typescript": "7.0.2",
     "vite": "8.3.0",
     "vitest": "5.0.1"

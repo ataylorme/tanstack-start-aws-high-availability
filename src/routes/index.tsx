@@ -2,10 +2,11 @@ import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
 import { ApplicationEventLab } from '../components/ApplicationEventLab'
+import { OrchestrationDashboard } from '../components/OrchestrationDashboard'
 import { WorkflowLab } from '../components/WorkflowLab'
 import { regionInfo } from '../lib/origin'
 
-const getRegion = createServerFn({ method: 'GET' }).handler(() => regionInfo(process.env))
+const getRegion = createServerFn({ method: 'GET' }).handler(() => ({ ...regionInfo(process.env), orchestration: process.env.APP_MODE === 'orchestration' }))
 const echoRegion = createServerFn({ method: 'POST' }).handler(() => regionInfo(process.env))
 
 export const Route = createFileRoute('/')({
@@ -29,6 +30,7 @@ function Home() {
       setBusy(false)
     }
   }
+  if (info.orchestration) return <OrchestrationDashboard />
   return <main>
     <p className="eyebrow">TANSTACK START / AWS REFERENCE EXAMPLE</p>
     <h1>Two regions.<br />One application.</h1>
