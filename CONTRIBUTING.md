@@ -74,12 +74,73 @@ Live deployment is **opt-in**. Follow the POC runbook using an explicitly select
 - Use bounded timeouts and retries; reason about their combined budget, not each setting in isolation.
 - Never grant a public handler execution permissions just to make an integration easier.
 
+## Design for years of operation
+
+The goal is to reduce cognitive complexity over the lifetime of the project, not just make the first implementation convenient. The main risk is gradually building a workflow platform while budgeting only for a DevOps application. Revisit these risks as scope, teams, integrations, and stored history grow.
+
+| Long-term risk | What contributors should do to mitigate it | What remains unresolved by that mitigation |
+| --- | --- | --- |
+| Historical workflow/version accumulation | Bound approval waits; define execution, audit, and replay support windows; retain old handlers and historical fixtures until inventory permits retirement | Expiring approvals does not retire running tasks, queued effects, terminal-history readers, or restorable backups |
+| Owning runtime and adapter correctness | Assign maintainers, pin dependencies, test adapter contracts and upgrades, track upstream, periodically compare ownership cost with managed alternatives | The team still owns recovery and compatibility; a shared image does not transfer that responsibility |
+| Ambiguous external effects | Require integration-specific idempotency, provider status queries, receipts, reconciliation, and compensation rules | Some outcomes require manual intervention; generic retries cannot prove an effect did not happen |
+| Stale approval or changed authorization | Introduce the proposed 24-hour policy below, bind approval to an immutable plan, and revalidate execution eligibility | Target drift, revoked access, artifact vulnerability, or policy changes can invalidate an otherwise timely approval |
+| Dangerous repair tooling | Make retry, cancellation, replay, and lock repair authorized, conditional, audited product actions with regression tests | An operator can still need business judgment; a force/unlock button is not a recovery protocol |
+| Shared-image release bottlenecks | Preserve module boundaries and compatible rolling upgrades; split specialized executors when ownership, compute, or release cadence justifies it | One image still rolls out non-atomically across roles and can couple unrelated changes |
+| Concurrency and fairness failures | Design per-target serialization/fencing, quotas, backpressure, and tenant-aware identities before increasing concurrency | Workflow leases do not prevent unrelated external writers from changing a target |
+| Uncoordinated event consumers | Publish intentional versioned contracts, assign owners, keep contract fixtures, and define deprecation/replay windows | Producers cannot assume all consumers upgrade together or have processed an event |
+| Retention versus restore/idempotency conflicts | Align history, receipt, deduplication, queue, and backup policies; rehearse restore against external state | Restoring a database does not roll back real-world effects; expired identity records can reopen duplicate-execution risk |
+| Green tests with declining production confidence | Combine fast tests with real-store, historical-data, provider-contract, load, and fault-injection tests | Test counts and mocks are not evidence for untested provider behavior or failure combinations |
+| Knowledge concentrated in original authors | Maintain diagnostic reasons, runnable examples, ownership, runbooks, and operator handoff exercises | Documentation requires maintenance and must be tested against actual incidents and new contributors |
+
+See [operations and growth](docs/orchestration/operations.md) for recovery and maturity gates and [versioning/migrations](docs/orchestration/versioning.md) for historical-data compatibility.
+
+### Proposed default: approvals expire after 24 hours
+
+**This is a proposed production policy, not current POC behavior.** The POC currently allows late approval and has no automatic approval expiry. Its existing “schedule within the next 24 hours” validation is a different constraint. This documentation change does not implement either approval or execution expiry.
+
+A concrete policy to implement and review:
+
+1. **Start the clock when the immutable plan becomes ready for approval**, not when the user first submitted the task. Persist `approvalRequestedAt` and `approvalExpiresAt = approvalRequestedAt + 24 hours` using trusted server time. Retries, page refreshes, duplicate submissions, and deployments must not restart the clock.
+2. **Bind the deadline to the proposal.** Include it in the new versioned plan/hash contract or an equivalently immutable, explicitly bound approval policy record. Show the exact deadline and timezone in the UI. Do not retrofit hash-covered fields into previously approved plans.
+3. **Enforce expiry server-side.** A new decision at or after the deadline is rejected. The API and durable processing path must agree; a disabled button or client countdown is not enforcement. Record the accepted decision time so processing delays do not misrepresent when a decision was made.
+4. **Resolve races atomically.** A pending approval can transition to an accepted decision or expiry, not both. Define conditional-write/state-transition semantics and test a decision racing the expiry worker. An identical retry of a decision accepted before expiry should return its recorded outcome, not create a second decision or contradict the original acceptance.
+5. **Make expiry durable and visible.** Persist an explicit expired outcome/reason, retain audit evidence, and remove the actionable approval prompt. Use a durable wakeup plus reconciliation for missed wakeups; do not rely on a browser timer. DynamoDB TTL deletion is not an execution-time business deadline and must not delete the evidence needed for audit/recovery.
+6. **Require a fresh plan after expiry.** Re-read the target and current policy, create a linked replacement task with a new request identity, and obtain new approval. Do not silently extend the old deadline or transfer its approval. A future replan/cancel feature must define these transitions; it does not exist in the POC today.
+
+**Approval expiry and execution eligibility are separate.** A decision accepted within 24 hours could remain queued for much longer. Define a separate immutable latest-start deadline (`executeBefore`, for example) or an explicit reapproval requirement for delayed execution. Validate that the requested schedule fits that window, and check eligibility immediately before beginning a new external effect. Check current target state and relevant authorization/policy as well; a timely approval is not a guarantee they remain valid.
+
+Once an external operation has begun, expiry is not permission to abandon its receipt, delete its lock, or pretend it never happened. Reconciliation and audit must continue after the deadline. Decide explicitly whether any further mutating retry or compensation needs new authorization; recovering an ambiguous operation is different from starting a fresh one.
+
+**Migration and tests required before shipping:**
+
+- Add a versioned persisted deadline and expired outcome without making historical plans unreadable or invalidating their original hashes.
+- Choose an explicit treatment for old pending approvals: preserve a documented legacy policy, or retire/replan them through an authorized transition. Do not invent a deadline silently at read time.
+- Test just before, exactly at, and after expiry; concurrent decision/expiry; response loss and duplicate decisions; restart/deployment; delayed workers; clock assumptions; missing timer delivery; and scheduled work whose execution window expires.
+- Test recovery of an already-started effect after expiry without opening a new unauthorized effect.
+- Update API responses, projections, UI, metrics, audit records, and runbooks together. An `expired` state is a proposed addition, not an existing member of the current task-status union.
+
+A 24-hour approval window reduces indefinite human waits and bounds one source of historical execution support. It does **not** justify retaining workflow versions for only 24 hours: operations, retries, delivery, audit, and restore/replay can all outlive that window.
+
+### Periodic architecture review
+
+At release retrospectives and regular maintenance reviews, ask:
+
+- Can a new TypeScript contributor add a task without understanding every transport component?
+- Can an operator explain and safely recover a stuck task without its original author?
+- How many historical versions remain, why, and what measured condition permits retirement?
+- How much engineering time goes to business capabilities versus runtime maintenance?
+- Are integrations, subscribers, and recovery procedures owned and tested?
+- Does one artifact still simplify delivery, or is independent execution ownership now worth a split?
+
+If runtime maintenance repeatedly dominates, reconsider the execution engine without assuming the TypeScript control plane, domain modules, approval model, or event contracts must all be discarded. Preserve these boundaries so decisions remain reversible where practical.
+
 ## Pull request checklist
 
 - [ ] Business behavior and non-goals are clear.
 - [ ] Authentication/authorization and server-derived actor identity are preserved.
 - [ ] Duplicate requests, conflicting requests, stale plans, retries, and ambiguous outcomes are covered.
 - [ ] A workflow/event/schema version decision is documented, including "unchanged" when appropriate.
+- [ ] Approval expiry, execution eligibility, retention, and historical-version support are considered; proposed safeguards are not described as already implemented.
 - [ ] Old persisted tasks remain readable/resumable, or there is an explicit safe transition plan.
 - [ ] Tests cover intended behavior and failure boundaries; evidence distinguishes local from live.
 - [ ] IAM and resource changes remain isolated from the HA lab.

@@ -4,6 +4,8 @@
 
 This is an operating model and maturation checklist. Items marked **required for production** are recommendations, not claims that the POC already implements them.
 
+The contributor guide includes a [long-term risk register](../../CONTRIBUTING.md#design-for-years-of-operation) and a [proposed 24-hour approval expiry policy](../../CONTRIBUTING.md#proposed-default-approvals-expire-after-24-hours). These are design requirements to implement, not current POC guarantees.
+
 ## Own the lifecycle, not only the handler
 
 | Phase | Owner's responsibility | Evidence to retain privately |
