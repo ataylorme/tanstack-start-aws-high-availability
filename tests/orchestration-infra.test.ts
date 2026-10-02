@@ -14,9 +14,28 @@ describe('isolated orchestration infrastructure', () => {
       expect(output).toContain('devops-orchestration-poc')
     }
   })
-  it('rejects execution without fixed deployment identity before invoking tools', () => {
+  it('rejects execution without explicit deployment identity before invoking tools', () => {
     for (const script of ['deploy', 'cleanup']) {
-      expect(() => execFileSync(process.execPath, [`scripts/${script}-orchestration.ts`, '--execute'], { env: { PATH: '' }, stdio: 'pipe' })).toThrow('AWS_PROFILE=ataylorme')
+      expect(() => execFileSync(process.execPath, [`scripts/${script}-orchestration.ts`, '--execute'], { env: { PATH: '' }, stdio: 'pipe' })).toThrow('Explicit AWS_PROFILE')
+    }
+  })
+  it('rejects malformed account IDs and wrong regions before invoking AWS', () => {
+    for (const script of ['deploy', 'cleanup', 'verify']) {
+      for (const env of [
+        { AWS_PROFILE: 'test-profile', EXPECTED_AWS_ACCOUNT_ID: 'invalid', AWS_REGION: 'us-east-1' },
+        { AWS_PROFILE: 'test-profile', EXPECTED_AWS_ACCOUNT_ID: '000000000000', AWS_REGION: 'us-west-2' },
+      ]) expect(() => execFileSync(process.execPath, [`scripts/${script}-orchestration.ts`, '--execute'], { env: { PATH: '', ...env }, stdio: 'pipe' })).toThrow('Explicit AWS_PROFILE')
+      const source = readFileSync(`scripts/${script}-orchestration.ts`, 'utf8')
+      expect(source).toContain("'sts', 'get-caller-identity'")
+      expect(source).toContain('!== account')
+    }
+  })
+  it('keeps live deployment identifiers out of public POC documentation and scripts', () => {
+    for (const file of ['docs/orchestration-poc.md', ...['deploy', 'cleanup', 'verify'].map(script => `scripts/${script}-orchestration.ts`)]) {
+      const source = readFileSync(file, 'utf8')
+      expect(source).not.toMatch(/\b\d{12}\b/)
+      expect(source).not.toMatch(/https:\/\/[a-z0-9]+\.lambda-url\./)
+      expect(source).not.toMatch(/task-[a-f0-9]{64}|sha256:[a-f0-9]{64}/)
     }
   })
   it('guards image format, credential continuity, and predeployment validation', () => {

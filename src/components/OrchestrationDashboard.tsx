@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createOrchestrationClient } from '../orchestration/client'
+import { accessToken, taskRequest, type ExecutionMode } from '../orchestration/form'
 import type { TaskView } from '../orchestration/types'
 
 export function OrchestrationDashboard() {
@@ -7,6 +8,7 @@ export function OrchestrationDashboard() {
   const [session, setSession] = useState('')
   const [tasks, setTasks] = useState<TaskView[]>([])
   const [desired, setDesired] = useState(1)
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('after-approval')
   const [executeAt, setExecuteAt] = useState('')
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
@@ -65,11 +67,9 @@ export function OrchestrationDashboard() {
   }
 
   function submit() {
-    const date = executeAt ? new Date(executeAt) : undefined
-    if (!Number.isInteger(desired) || desired < 1 || desired > 5 || (date && !Number.isFinite(date.getTime()))) {
-      setError('Choose concurrency from 1 to 5 and a valid execution time.'); return
-    }
-    const input = { desiredConcurrency: desired, ...(date ? { executeAt: date.toISOString() } : {}) }
+    let input
+    try { input = taskRequest(desired, executionMode, executeAt) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : 'Invalid request'); return }
     const body = JSON.stringify(input)
     if (submission.current?.body !== body) submission.current = { body, key: crypto.randomUUID() }
     const key = submission.current.key
@@ -82,11 +82,14 @@ export function OrchestrationDashboard() {
     <p className="intro">Change sandbox Lambda reserved concurrency. Processing and approvals stay in the control plane; execution is isolated in the data plane.</p>
     <section className="details workflow-lab" aria-label="Access">
       <h2>Access</h2>
-      <p>Use a requester or approver token. Permissions are enforced by the server. Tokens stay in memory only.</p>
+      <p>Paste only the requester or approver value from credentials.json—not the entire file, quotes, or a Bearer prefix. Permissions are enforced by the server. Tokens stay in memory only.</p>
       <label>Access token <input type="password" autoComplete="off" value={token} onChange={event => {
         ++generation.current; mutation.current?.abort(); mutation.current = null; setLoadError(''); setBusy(false); setSession(''); setTasks([]); setError(''); submission.current = null; setToken(event.target.value)
       }} /></label>
-      <button disabled={!token || busy} onClick={() => { setSession(token); setRefresh(value => value + 1) }}>Connect / refresh</button>
+      <button disabled={!token || busy} onClick={() => {
+        try { const credential = accessToken(token); setError(''); setLoadError(''); setSession(credential); setRefresh(value => value + 1) }
+        catch (caught) { setError(caught instanceof Error ? caught.message : 'Invalid token') }
+      }}>Connect / refresh</button>
       <button disabled={!token} onClick={() => {
         ++generation.current; mutation.current?.abort(); mutation.current = null; setLoadError(''); setToken(''); setSession(''); setTasks([]); setBusy(false); setError(''); setNotice('Disconnected.'); submission.current = null
       }}>Disconnect</button>
@@ -95,8 +98,13 @@ export function OrchestrationDashboard() {
       <h2>Request capacity change</h2>
       <form onSubmit={event => { event.preventDefault(); submit() }}>
         <label>Desired concurrency (1–5) <input type="number" required min={1} max={5} step={1} value={desired} onChange={event => setDesired(Number(event.target.value))} /></label>
-        <label>Execute at (your local time, optional) <input type="datetime-local" value={executeAt} onChange={event => setExecuteAt(event.target.value)} /></label>
-        <p>Leave the time blank to execute after approval. A selected time is sent as UTC. Retrying an unchanged failed submission reuses its idempotency key.</p>
+        <fieldset>
+          <legend>Execution timing</legend>
+          <label><input style={{ width: 'auto', marginRight: '0.5rem' }} type="radio" name="execution-timing" value="after-approval" checked={executionMode === 'after-approval'} onChange={() => { setExecutionMode('after-approval'); setExecuteAt('') }} />Execute after approval</label>
+          <label><input style={{ width: 'auto', marginRight: '0.5rem' }} type="radio" name="execution-timing" value="scheduled" checked={executionMode === 'scheduled'} onChange={() => setExecutionMode('scheduled')} />Schedule for later</label>
+          {executionMode === 'scheduled' && <label>Execute at (your local time) <input type="datetime-local" required value={executeAt} onChange={event => setExecuteAt(event.target.value)} /></label>}
+        </fieldset>
+        <p>{executionMode === 'scheduled' ? 'Choose a time within the next 24 hours. Approval is still required; late approval executes as soon as possible. The selected time is sent as UTC.' : 'Execute as soon as the plan is approved; no scheduled time is sent.'} Retrying an unchanged failed submission reuses its idempotency key.</p>
         <button disabled={!session || busy} type="submit">{busy ? 'Submitting…' : 'Create task'}</button>
       </form>
     </section>

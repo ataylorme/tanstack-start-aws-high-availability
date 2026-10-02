@@ -86,14 +86,14 @@ Do not add `--volumes` unless intentionally discarding all local workflow histor
 
 ## Isolated AWS deployment
 
-The sole allowed deployment identity is profile `ataylorme`, account `963564733329`, region `us-east-1`. Reserved sandbox concurrency consumes account capacity. The deployer checks available unreserved concurrency and requires at least 106 before proceeding.
+Deployment requires an explicitly selected AWS profile and expected 12-digit account ID; STS must match that account before any resource operation. The region is restricted to `us-east-1`. Keep operator identity and deployment-specific values outside the public repository. Reserved sandbox concurrency consumes account capacity. The deployer checks available unreserved concurrency and requires at least 106 before proceeding.
 
 ```sh
 # Offline inspection; makes no AWS calls.
 node scripts/deploy-orchestration.ts
 
-export AWS_PROFILE=ataylorme
-export EXPECTED_AWS_ACCOUNT_ID=963564733329
+export AWS_PROFILE='<your-profile>'
+export EXPECTED_AWS_ACCOUNT_ID='<your-account-id>'
 export AWS_REGION=us-east-1
 node scripts/deploy-orchestration.ts --execute
 ```
@@ -103,6 +103,21 @@ Execution verifies STS identity, runs `npm run check` and `npm run smoke`, check
 `.deploy/devops-orchestration-poc/` is ignored by Git, mode 0700, with evidence/credentials files mode 0600. The deployer prints the URL and credentials-file path, **not token values**. Losing the credentials file while the stack exists causes deployment to stop rather than silently rotate credentials. Retain it in an approved secret store for a longer-lived deployment; this POC does not provide managed rotation.
 
 `RequesterToken` and `ApproverToken` are NoEcho CloudFormation parameters and Lambda environment values. AWS principals with sufficient infrastructure access can obtain them; this is demo authorization, not enterprise identity/security isolation. There is no WAF, per-person identity, or fine-grained tenant authorization. Treat the public URL as an internet-exposed demo and monitor usage/cost.
+
+### Dashboard credentials and execution timing
+
+`credentials.json` is a data file, not an executable. Do not run its path or paste the entire JSON document into the dashboard. Copy **one value** without quotes or a `Bearer` prefix. On macOS:
+
+```sh
+# Copy requester token for creating tasks; no token is printed.
+jq -jr '.requester' .deploy/devops-orchestration-poc/credentials.json | pbcopy
+# Copy approver token when ready to review a plan.
+jq -jr '.approver' .deploy/devops-orchestration-poc/credentials.json | pbcopy
+```
+
+Paste into **Access token** and click **Connect / refresh**. Tokens stay in browser memory and are cleared on reload. Clear your clipboard when finished. A 401 means the supplied value did not authenticate; local development tokens do not work in AWS.
+
+**Execute after approval** is selected by default and sends no schedule. Choose **Schedule for later** to reveal the required local date/time input. Switching back clears that input; the hidden date cannot schedule a task. Scheduling still requires approval.
 
 ### Curl exercise without exposing bearer tokens in history or process arguments
 
@@ -179,19 +194,9 @@ The cleanup command verifies account and stack ownership, removes the POC's one-
 
 ## Acceptance evidence
 
-**Passed on 2026-10-02**, live run `2026-10-02T17:08:40.168Z` through `2026-10-02T17:16:34.958Z`.
+The initial live acceptance suite passed: role boundaries, idempotency/conflicts, immediate and scheduled execution, rejection without mutation, worker outage recovery, and independent SNS delivery recovery. A paused unchanged `v1` workflow also survived an image replacement. Distinct `v1`/`v2` routing is tested locally, not claimed as a live migration test. Direct adapter checks verified partial-batch responses and invocation failure propagation.
 
-- Dashboard: <https://4dvoi3w3qvfd2vb6kkibxzyxty0qzhcl.lambda-url.us-east-1.on.aws/>
-- Stacks: `devops-orchestration-poc-bootstrap` and `devops-orchestration-poc`, account `963564733329`, region `us-east-1`. Application stack verified `UPDATE_COMPLETE`; both worker and relay mappings restored to `Enabled`. HA-lab stacks were not modified.
-- All six Lambda roles were verified against shared image digest `sha256:a7ed58fb4e0fd2f02e8359657220a39173cdd2cb2eccf4849dbf1b936cb36f49`. Source is the implementation on `codex/devops-orchestration-poc`, based on the commit above; this acceptance run preceded its implementation commit.
-- **306 tests across 32 files passed**, including real DynamoDB Local persistence/recovery suites. Build, typecheck, smoke checks, CloudFormation lint, and whitespace checks passed.
-- Live role boundaries, duplicate admission/approval, conflicting payload/decision rejection, immediate execution, rejection without mutation, and scheduled execution passed. Scheduled completion `2026-10-02T17:10:27.893Z` was after requested time `2026-10-02T17:10:26.483Z`.
-- Worker outage: task `task-6672fcc7388a24f16d895f8936de328c9d2a733fa18e1679eb68d4e73ca89df9` stayed queued while paused and completed after restoration without a replacement request. The verifier waits 150 seconds after disabling a mapping; shorter waits proved unreliable due to residual processing.
-- Independent delivery recovery: task `task-edda84ac5f7055582c1a9caba373555516ea864aefc2e4ede45534718e8780fa` succeeded while the relay was paused. After restoration, the observation queue received event `success-task-edda84ac5f7055582c1a9caba373555516ea864aefc2e4ede45534718e8780fa`. The sandbox was independently read back at reserved concurrency **5**.
-- A paused unchanged `v1` workflow survived a live image replacement with its original plan hash, then completed. Distinct `v1`/`v2` version routing is covered locally, not claimed as a live migration test.
-- Direct live adapter tests verified SQS partial-batch responses and whole-invocation failure propagation.
-
-Private evidence (not committed): `.deploy/devops-orchestration-poc/acceptance.json` includes task, operation and event IDs, timelines, receipts and image URI; `rolling-before.json`, `rolling-after.json`, and `adapter-validation.json` record the separate compatibility/adapter checks. Earlier unsuccessful verifier attempts are retained as `acceptance-attempt-*.json`; they are not counted as passing runs. Credentials are in `credentials.json` in the same private directory and are not included in evidence.
+Detailed evidence stays under ignored `.deploy/devops-orchestration-poc/`: `acceptance.json`, `rolling-before.json`, `rolling-after.json`, and `adapter-validation.json`. Keep account IDs, live URLs, image/stack identifiers, task/event IDs, timestamps, and credentials in private operational records—not in this public runbook. Retrieve the dashboard URL from the private stack outputs file. Failed verifier attempts are retained separately and are not counted as passes.
 
 **Remaining gaps:** interactive browser QA was unavailable (HTTP/SSR checks were performed); crash-mid-effect recovery is covered by fault-injection tests rather than a live process-kill drill. Shared demo tokens are not enterprise identity. This does not establish production readiness, multi-region resilience, or exactly-once external effects. The AWS POC is intentionally left deployed and incurs ongoing charges. Local DynamoDB was stopped with its persistent volume retained.
 
@@ -206,7 +211,7 @@ ECR repository**. Omit it when application code changes.
 Run automated, opt-in live acceptance with:
 
 ```sh
-AWS_PROFILE=ataylorme EXPECTED_AWS_ACCOUNT_ID=963564733329 AWS_REGION=us-east-1 \
+AWS_PROFILE="$AWS_PROFILE" EXPECTED_AWS_ACCOUNT_ID="$EXPECTED_AWS_ACCOUNT_ID" AWS_REGION=us-east-1 \
   npm run verify:poc -- --execute
 ```
 

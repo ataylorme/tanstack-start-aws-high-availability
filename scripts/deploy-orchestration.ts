@@ -6,18 +6,19 @@ import { resolve } from 'node:path'
 
 const prefix = 'devops-orchestration-poc'
 const region = 'us-east-1'
-const account = '963564733329'
+const account = process.env.EXPECTED_AWS_ACCOUNT_ID ?? ''
+const profile = process.env.AWS_PROFILE ?? ''
 const args = process.argv.slice(2)
 if (args.some(arg => arg !== '--execute')) throw new Error('Supported argument: --execute')
 if (!args.includes('--execute')) {
-  console.log(`Plan only: no AWS calls made. Deploy isolated ${prefix}-bootstrap and ${prefix} in ${region}, account ${account}. Build one digest-pinned image for six roles, preview guarded change sets, preserve existing resources. Execution requires AWS_PROFILE=ataylorme EXPECTED_AWS_ACCOUNT_ID=${account} AWS_REGION=${region}. Credentials and evidence remain in ignored .deploy/${prefix}.`)
+  console.log(`Plan only: no AWS calls made. Deploy isolated ${prefix}-bootstrap and ${prefix} in ${region}. Build one digest-pinned image for six roles, preview guarded change sets, preserve existing resources. Execution requires AWS_PROFILE and EXPECTED_AWS_ACCOUNT_ID plus AWS_REGION=${region}. Credentials and evidence remain in ignored .deploy/${prefix}.`)
   process.exit(0)
 }
-if (process.env.AWS_PROFILE !== 'ataylorme' || process.env.EXPECTED_AWS_ACCOUNT_ID !== account || process.env.AWS_REGION !== region) throw new Error('Execution requires AWS_PROFILE=ataylorme EXPECTED_AWS_ACCOUNT_ID=963564733329 AWS_REGION=us-east-1')
+if (!profile.trim() || !/^\d{12}$/.test(account) || process.env.AWS_REGION !== 'us-east-1') throw new Error('Explicit AWS_PROFILE, 12-digit EXPECTED_AWS_ACCOUNT_ID, and AWS_REGION=us-east-1 required')
 function run(command: string, args: string[], input?: string): string {
   return execFileSync(command, args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'], ...(input === undefined ? {} : { input }), env: { ...process.env, AWS_PAGER: '' }, maxBuffer: 32 * 1024 * 1024 }).trim()
 }
-function aws(args: string[]): string { return run('aws', ['--profile', 'ataylorme', '--region', region, ...args]) }
+function aws(args: string[]): string { return run('aws', ['--profile', profile, '--region', region, ...args]) }
 if (aws(['sts', 'get-caller-identity', '--query', 'Account', '--output', 'text']) !== account) throw new Error('AWS account guard failed')
 const limits = JSON.parse(aws(['lambda', 'get-account-settings', '--output', 'json'])) as { AccountLimit: { UnreservedConcurrentExecutions: number } }
 if (limits.AccountLimit.UnreservedConcurrentExecutions < 106) throw new Error('At least 106 unreserved concurrency required for POC safety')

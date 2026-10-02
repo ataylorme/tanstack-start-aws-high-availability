@@ -4,10 +4,12 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { TaskView } from '../src/orchestration/types.ts'
 const prefix = 'devops-orchestration-poc'
+const account = process.env.EXPECTED_AWS_ACCOUNT_ID ?? ''
+const profile = process.env.AWS_PROFILE ?? ''
 if (!process.argv.includes('--execute')) { console.log('Plan only: --execute tests only the isolated POC, including briefly pausing/restoring its worker and relay mappings. No AWS calls made.'); process.exit(0) }
-if (process.env.AWS_PROFILE !== 'ataylorme' || process.env.EXPECTED_AWS_ACCOUNT_ID !== '963564733329' || process.env.AWS_REGION !== 'us-east-1') throw new Error('Explicit POC profile/account/region required')
-function aws(args: string[]) { return execFileSync('aws', ['--profile', 'ataylorme', '--region', 'us-east-1', ...args], { encoding: 'utf8', env: { ...process.env, AWS_PAGER: '' }, maxBuffer: 16 * 1024 * 1024 }).trim() }
-if (aws(['sts', 'get-caller-identity', '--query', 'Account', '--output', 'text']) !== '963564733329') throw new Error('Wrong account')
+if (!profile.trim() || !/^\d{12}$/.test(account) || process.env.AWS_REGION !== 'us-east-1') throw new Error('Explicit AWS_PROFILE, 12-digit EXPECTED_AWS_ACCOUNT_ID, and AWS_REGION=us-east-1 required')
+function aws(args: string[]) { return execFileSync('aws', ['--profile', profile, '--region', 'us-east-1', ...args], { encoding: 'utf8', env: { ...process.env, AWS_PAGER: '' }, maxBuffer: 16 * 1024 * 1024 }).trim() }
+if (aws(['sts', 'get-caller-identity', '--query', 'Account', '--output', 'text']) !== account) throw new Error('Wrong account')
 const work = resolve('.deploy', prefix)
 const credentials = JSON.parse(readFileSync(resolve(work, 'credentials.json'), 'utf8')) as { requester: string; approver: string }
 const stack = JSON.parse(aws(['cloudformation', 'describe-stacks', '--stack-name', prefix, '--query', 'Stacks[0]', '--output', 'json'])) as { Outputs: Array<{ OutputKey: string; OutputValue: string }>; Tags?: Array<{ Key: string; Value: string }>; StackStatus: string }
