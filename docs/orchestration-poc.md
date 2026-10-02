@@ -1,5 +1,7 @@
 # DevOps orchestration POC runbook
 
+For contributors new to event-driven applications, read the [architecture guide](orchestration/architecture.md) and [development cookbook](orchestration/development.md). See [operations and growth](orchestration/operations.md) for lifecycle ownership and [versioning/migrations](orchestration/versioning.md) before changing persisted contracts. Start with [CONTRIBUTING.md](../CONTRIBUTING.md) for setup and PR requirements.
+
 ## What this demonstrates
 
 A cohesive TypeScript/TanStack Start control plane owns **request → plan → approval → scheduled or immediate execution → verification → completion event**. The real operation changes the reserved concurrency of a dedicated sandbox Lambda to an integer from **1–5**. This is capacity configuration, not instance-count scaling or provisioned concurrency.

@@ -211,6 +211,11 @@ confuse those with a failed build. Revalidate updates before changing pinned ver
 
 ## Separate DevOps orchestration POC
 
+**New contributors:** start with [CONTRIBUTING.md](CONTRIBUTING.md), then the
+[architecture](docs/orchestration/architecture.md), [development cookbook](docs/orchestration/development.md),
+[operations and growth](docs/orchestration/operations.md), and
+[versioning/migrations](docs/orchestration/versioning.md) guides.
+
 The [orchestration POC runbook](docs/orchestration-poc.md) describes an isolated,
 single-region task platform: immutable plans, approval, immediate/one-time scheduled
 sandbox Lambda capacity changes, durable recovery, and independent SNS events.
