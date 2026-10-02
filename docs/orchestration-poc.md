@@ -198,7 +198,9 @@ The initial live acceptance suite passed: role boundaries, idempotency/conflicts
 
 Detailed evidence stays under ignored `.deploy/devops-orchestration-poc/`: `acceptance.json`, `rolling-before.json`, `rolling-after.json`, and `adapter-validation.json`. Keep account IDs, live URLs, image/stack identifiers, task/event IDs, timestamps, and credentials in private operational records—not in this public runbook. Retrieve the dashboard URL from the private stack outputs file. Failed verifier attempts are retained separately and are not counted as passes.
 
-**Remaining gaps:** interactive browser QA was unavailable (HTTP/SSR checks were performed); crash-mid-effect recovery is covered by fault-injection tests rather than a live process-kill drill. Shared demo tokens are not enterprise identity. This does not establish production readiness, multi-region resilience, or exactly-once external effects. The AWS POC is intentionally left deployed and incurs ongoing charges. Local DynamoDB was stopped with its persistent volume retained.
+**Browser follow-up:** Chrome verified requester-token login, task polling, the default execute-after-approval mode, and schedule selection/reset. No console warnings or errors were captured during those checks. The follow-up build passed 324 tests, typechecking, and smoke checks. Safari console errors were reported but were not reproduced or diagnosed in Chrome.
+
+**Remaining gaps:** crash-mid-effect recovery is covered by fault-injection tests rather than a live process-kill drill. Shared demo tokens are not enterprise identity. This does not establish production readiness, multi-region resilience, or exactly-once external effects. The AWS POC is intentionally left deployed and incurs ongoing charges. Local DynamoDB was stopped with its persistent volume retained.
 
 ### Deployment transport and reuse
 
