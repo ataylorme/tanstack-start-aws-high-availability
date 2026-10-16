@@ -1,0 +1,125 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Dedicated human-operator role for one isolated celld directory shard; no runtime regional authorization",
+  "Metadata": {
+    "SecurityBoundary": "IAM restricts exact table and shard keys, but cannot constrain status attribute values. Only the companion CLI FENCING guard restricts writes to inert transitions; possession of this role alone is not enforcement of a FENCING-only value policy. No ACTIVE or promotion grants are intended. This is NOT a regional execution/storage fence. Never attach this role to celld or edge. Enclosing-operation requests cannot match this item Allow; omitting a nonexistent TransactWriteItems IAM action alone would not prohibit transactions.",
+    "TrustBoundary": "Trust exactly one explicitly supplied same-account IAM user or role; Role assumption must satisfy applicable trust/IAM controls and explicit denies; same-account direct-principal trust can itself authorize assumption. No wildcard principal, role chaining expansion, iam:PassRole or permission management is granted."
+  },
+  "Parameters": {
+    "TableName": {
+      "Type": "String",
+      "AllowedPattern": "tanstack-celld-[a-z0-9-]{1,24}-ownership",
+      "Description": "Exact isolated directory table name; must match the recorded MRSC directory."
+    },
+    "WriterShardId": {
+      "Type": "String",
+      "AllowedPattern": "v1:(0[0-9]|[1-5][0-9]|6[0-3])",
+      "Description": "Exactly one canonical v1 shard; deliberately no default."
+    },
+    "OperatorPrincipalArn": {
+      "Type": "String",
+      "NoEcho": true,
+      "AllowedPattern": "arn:aws:iam::[0-9]{12}:(user|role)/[A-Za-z0-9_+=,.@/-]+",
+      "Description": "Exact same-account IAM user or role ARN, supplied only through private configuration; not an STS session ARN."
+    }
+  },
+  "Resources": {
+    "OwnershipWriterRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "OperatorPrincipalArn"
+                }
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:PrincipalAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "OneDirectoryShard",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "DescribeExactReplicas",
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:DescribeTable"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:dynamodb:us-east-1:${AWS::AccountId}:table/${TableName}"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:dynamodb:us-west-2:${AWS::AccountId}:table/${TableName}"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "ReadAndConditionallyWriteOneShard",
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:dynamodb:us-east-1:${AWS::AccountId}:table/${TableName}"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:dynamodb:us-west-2:${AWS::AccountId}:table/${TableName}"
+                    }
+                  ],
+                  "Condition": {
+                    "ForAllValues:StringEquals": {
+                      "dynamodb:LeadingKeys": [
+                        {
+                          "Ref": "WriterShardId"
+                        }
+                      ]
+                    },
+                    "Null": {
+                      "dynamodb:LeadingKeys": "false",
+                      "dynamodb:EnclosingOperation": "true"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "RoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "OwnershipWriterRole",
+          "Arn"
+        ]
+      }
+    },
+    "ShardId": {
+      "Value": {
+        "Ref": "WriterShardId"
+      }
+    }
+  }
+}
