@@ -12,10 +12,13 @@
     "start": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit && tsc -p edge/tsconfig.json --noEmit",
     "test": "vitest run",
-    "check": "npm run build && npm run build:edge && npm run typecheck && npm test",
+    "check": "npm run build && npm run build:edge && npm run typecheck && npm test && npm run build:celld && npm run typecheck:celld && npm run privacy:check",
     "smoke": "node scripts/smoke.ts",
     "build:edge": "tsc -p edge/tsconfig.json",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:celld": "vite build --config experiments/celld/vite.config.ts experiments/celld",
+    "typecheck:celld": "tsc -p experiments/celld/tsconfig.json --noEmit && tsc -p experiments/celld/tsconfig.tools.json --noEmit",
+    "privacy:check": "node experiments/celld/scripts/check-privacy.ts"
   },
   "dependencies": {
     "@tanstack/react-router": "1.170.38",

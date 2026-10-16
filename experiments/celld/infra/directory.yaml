@@ -1,0 +1,82 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Isolated celld ownership directory option: MRSC, two replicas and one witness. Deploy once in us-east-1 only after explicit topology selection.",
+  "Metadata": {
+    "Serialization": "JSON is a YAML subset; kept dependency-free for structural tests.",
+    "TopologyDecision": {
+      "Status": "REQUIRES_EXPLICIT_OPERATOR_SELECTION",
+      "RequestedWesternFleetRegion": "us-west-1",
+      "RequestedDirectoryReplicaSupported": false,
+      "Reason": "The requested us-west-1 directory replica is not listed as MRSC-supported. This template offers us-west-2 explicitly; it does not move the celld fleet or authorize deployment.",
+      "DeploymentRequirement": "CLI must refuse deployment absent explicit DIRECTORY_WEST_REGION=us-west-2 and pass it as WesternReplicaRegion. There is no default.",
+      "DeploymentRegion": "us-east-1",
+      "RegionalLatencyCaveat": "A us-west-1 celld fleet must use the explicitly selected us-west-2 directory endpoint; measure the cross-region latency."
+    },
+    "DirectoryContract": {
+      "PrimaryKey": "shardId",
+      "RoutingVersion": "v1",
+      "ShardCount": 64,
+      "ReadRequirement": "GetItem with ConsistentRead=true; fail closed on unavailable quorum or invalid/expired ownership.",
+      "MutationRequirement": "Single-item conditional writes only; MRSC does not support transaction APIs. Never infer an atomic multi-item snapshot.",
+      "ExpiryRequirement": "leaseExpiresAt is explicitly validated Unix milliseconds, not DynamoDB TTL. MRSC does not support TTL.",
+      "ExecutionFence": "Directory routing metadata is not a celld storage/execution fence. Automatic writable regional promotion remains disabled."
+    },
+    "Sources": [
+      "https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-globaltable.html",
+      "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-global-table-design.html",
+      "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/V2globaltables_HowItWorks.html",
+      "https://aws.amazon.com/about-aws/whats-new/2026/09/dynamodb-mrsc-additional-regions/"
+    ]
+  },
+  "Parameters": {
+    "TableName": {
+      "Type": "String",
+      "MinLength": 3,
+      "MaxLength": 255,
+      "AllowedPattern": "[a-zA-Z0-9_.-]+",
+      "Description": "Unique isolated experiment table name supplied through private deployment configuration."
+    },
+    "WesternReplicaRegion": {
+      "Type": "String",
+      "AllowedValues": ["us-west-2"],
+      "Description": "Explicit topology decision required: supported western directory replica. Does not select the celld fleet region."
+    }
+  },
+  "Resources": {
+    "Directory": {
+      "Type": "AWS::DynamoDB::GlobalTable",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "TableName": {"Ref": "TableName"},
+        "BillingMode": "PAY_PER_REQUEST",
+        "MultiRegionConsistency": "STRONG",
+        "AttributeDefinitions": [{"AttributeName": "shardId", "AttributeType": "S"}],
+        "KeySchema": [{"AttributeName": "shardId", "KeyType": "HASH"}],
+        "Replicas": [
+          {
+            "Region": "us-east-1",
+            "DeletionProtectionEnabled": true,
+            "PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true}
+          },
+          {
+            "Region": {"Ref": "WesternReplicaRegion"},
+            "DeletionProtectionEnabled": true,
+            "PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true}
+          }
+        ],
+        "GlobalTableWitnesses": [{"Region": "us-east-2"}]
+      }
+    }
+  },
+  "Outputs": {
+    "DirectoryTableName": {"Value": {"Ref": "Directory"}},
+    "DirectoryTableArn": {"Value": {"Fn::GetAtt": ["Directory", "Arn"]}},
+    "EasternDirectoryRegion": {"Value": "us-east-1"},
+    "WesternDirectoryRegion": {"Value": {"Ref": "WesternReplicaRegion"}},
+    "WesternDirectoryTableArn": {
+      "Value": {"Fn::Sub": "arn:${AWS::Partition}:dynamodb:${WesternReplicaRegion}:${AWS::AccountId}:table/${TableName}"}
+    },
+    "WitnessRegion": {"Value": "us-east-2"}
+  }
+}

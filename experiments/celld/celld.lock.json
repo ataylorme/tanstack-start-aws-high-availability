@@ -1,0 +1,9 @@
+{
+  "version": "v0.6.2",
+  "sourceCommit": "90b43017241f81189453d326d05948f388b34652",
+  "assets": {
+    "darwin-arm64": { "name": "celld-aarch64-apple-darwin.gz", "sha256": "b81a38299800679e9651fd7c1544540185682dcb59eed1a24c8cc36c6b31e76d" },
+    "linux-arm64": { "name": "celld-aarch64-unknown-linux-gnu.gz", "sha256": "4eca87c6797590000a344c1b768364e9696e8817f5fbc16193f459d2edac7cd0" },
+    "linux-x64": { "name": "celld-x86_64-unknown-linux-gnu.gz", "sha256": "ce0ee3552cc8d55dde3998dc3b1b0c8f547bbcb4bc803d2a94842368b047646c" }
+  }
+}

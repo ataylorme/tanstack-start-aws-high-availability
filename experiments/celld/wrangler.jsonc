@@ -1,0 +1,38 @@
+{
+  "name": "tanstack-celld-experiment",
+  "main": "runtime/worker.js",
+  "compatibility_date": "2026-08-18",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "dist/client",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "REGION_MODE": "disabled"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "COUNTERS",
+        "class_name": "Counter"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Counter"
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "binding": "VALIDATIONS",
+      "name": "validation",
+      "class_name": "Validation"
+    }
+  ]
+}

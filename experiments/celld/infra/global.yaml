@@ -1,0 +1,273 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Independent celld experiment ingress; no origin failover replay or promotion",
+  "Parameters": {
+    "EastDomain": {
+      "Type": "String"
+    },
+    "DirectoryName": {
+      "Type": "String"
+    },
+    "DirectoryWestRegion": {
+      "Type": "String",
+      "AllowedValues": [
+        "us-west-2"
+      ]
+    },
+    "OriginSecret": {
+      "Type": "String",
+      "NoEcho": true,
+      "AllowedPattern": "[a-f0-9]{64}"
+    },
+    "ArtifactBucket": {
+      "Type": "String"
+    },
+    "EdgeCodeKey": {
+      "Type": "String"
+    },
+    "EdgeCodeSha256": {
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "EdgeRole": {
+      "Type": "AWS::IAM::Role",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com",
+                  "edgelambda.amazonaws.com"
+                ]
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ReadOwnershipOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:dynamodb:us-east-1:${AWS::AccountId}:table/${DirectoryName}"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${DirectoryWestRegion}:${AWS::AccountId}:table/${DirectoryName}"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:*:${AWS::AccountId}:*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "EdgeRouter": {
+      "Type": "AWS::Lambda::Function",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Runtime": "nodejs24.x",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "EdgeRole",
+            "Arn"
+          ]
+        },
+        "Architectures": [
+          "x86_64"
+        ],
+        "MemorySize": 128,
+        "Timeout": 5,
+        "Code": {
+          "S3Bucket": {
+            "Ref": "ArtifactBucket"
+          },
+          "S3Key": {
+            "Ref": "EdgeCodeKey"
+          }
+        }
+      }
+    },
+    "EdgeVersion": {
+      "Type": "AWS::Lambda::Version",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "EdgeRouter"
+        },
+        "CodeSha256": {
+          "Ref": "EdgeCodeSha256"
+        }
+      }
+    },
+    "ForwardViewer": {
+      "Type": "AWS::CloudFront::OriginRequestPolicy",
+      "Properties": {
+        "OriginRequestPolicyConfig": {
+          "Name": {
+            "Fn::Sub": "${AWS::StackName}-viewer"
+          },
+          "CookiesConfig": {
+            "CookieBehavior": "all"
+          },
+          "QueryStringsConfig": {
+            "QueryStringBehavior": "all"
+          },
+          "HeadersConfig": {
+            "HeaderBehavior": "allViewer"
+          }
+        }
+      }
+    },
+    "Distribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "Comment": "celld A-primary B-standby experiment; writable promotion disabled",
+          "HttpVersion": "http2and3",
+          "IPV6Enabled": true,
+          "PriceClass": "PriceClass_100",
+          "ViewerCertificate": {
+            "CloudFrontDefaultCertificate": true
+          },
+          "Origins": [
+            {
+              "Id": "primary",
+              "DomainName": {
+                "Ref": "EastDomain"
+              },
+              "ConnectionAttempts": 1,
+              "ConnectionTimeout": 3,
+              "CustomOriginConfig": {
+                "HTTPPort": 80,
+                "OriginProtocolPolicy": "http-only",
+                "OriginReadTimeout": 30,
+                "OriginKeepaliveTimeout": 5
+              },
+              "OriginCustomHeaders": [
+                {
+                  "HeaderName": "x-celld-origin-secret",
+                  "HeaderValue": {
+                    "Ref": "OriginSecret"
+                  }
+                }
+              ]
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "primary",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": [
+              "GET",
+              "HEAD",
+              "OPTIONS",
+              "PUT",
+              "PATCH",
+              "POST",
+              "DELETE"
+            ],
+            "CachedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "OriginRequestPolicyId": {
+              "Ref": "ForwardViewer"
+            },
+            "Compress": true,
+            "LambdaFunctionAssociations": [
+              {
+                "EventType": "origin-request",
+                "IncludeBody": false,
+                "LambdaFunctionARN": {
+                  "Ref": "EdgeVersion"
+                }
+              }
+            ]
+          },
+          "CustomErrorResponses": [
+            {
+              "ErrorCode": 503,
+              "ErrorCachingMinTTL": 0
+            },
+            {
+              "ErrorCode": 500,
+              "ErrorCachingMinTTL": 0
+            },
+            {
+              "ErrorCode": 502,
+              "ErrorCachingMinTTL": 0
+            },
+            {
+              "ErrorCode": 504,
+              "ErrorCachingMinTTL": 0
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "SiteUrl": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Fn::GetAtt": [
+                "Distribution",
+                "DomainName"
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "DistributionId": {
+      "Value": {
+        "Ref": "Distribution"
+      }
+    },
+    "EdgeRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "EdgeRole",
+          "Arn"
+        ]
+      }
+    }
+  },
+  "Metadata": {
+    "SecurityLimitation": "Viewer HTTPS only. CloudFront to ALB uses HTTP protected by CloudFront prefix list and shared origin secret, not end-to-end TLS. Requires TLS origin design before production."
+  }
+}

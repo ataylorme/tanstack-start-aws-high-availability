@@ -1,0 +1,1119 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Isolated celld v0.6.2 regional two-AZ experiment; deploy application separately",
+  "Metadata": {
+    "SecurityAndOperations": {
+      "TransportGap": "CloudFront to ALB and ALB to worker use HTTP. Origin header is access control, not encryption. Lab only; do not send sensitive production data. TLS custom-domain origin is required before production.",
+      "NetworkTradeoff": "Public IPv4 permits outbound GitHub, S3, SSM without NAT cost. No SSH; ingress is SG-restricted. Peer/operator :8081 binds only private IP; trust boundary is fleet nodes.",
+      "Health": "Native celld readiness drives ALB. ASG uses EC2 health to avoid replacement storms during bucket/deployment outages; service failures alarm and systemd restarts. Stack success is NOT runtime readiness.",
+      "Storage": "Bucket retained and versioned without expiry for recovery evidence. EBS is disposable node cache; fleet ack may precede S3 upload, so all-node loss can lose acknowledged writes. No regional writable promotion.",
+      "Logging": "CloudWatch agent ships celld stdout/stderr to stack-owned 14-day log group with per-instance streams; local copytruncate rotation can lose lines during rotation. cloud-init/bootstrap logs remain accessible via SSM. Alarm notification targets are not configured.",
+      "Deployment": "Application bundle and worker bindings/vars are deployed separately with celld deploy from trusted host. CELLD_WATCH is v0.6.2 data-directory setting; no CELLD_DATA_DIR or run subcommand.",
+      "ForwardedHeaders": "celld trusts X-Forwarded-Host and X-Forwarded-Proto only because edge must replace client-supplied values and ALB admits only CloudFront plus origin-secret header. ALB HTTP origin leg may overwrite X-Forwarded-Proto to http; deployment must validate URL/redirect semantics, not assume end-to-end HTTPS.",
+      "RecoveryArchive": "CRR is opt-in second-phase configuration after both regional archives exist. Destination MUST be the remote ArchiveBucket output, never an active fleet bucket. Source-name parameter must match actual local FleetBucket. CRR preserves FleetPrefix/ keys with no prefix rewriting; all matching objects including ownership, lease, and log metadata are quarantined evidence only. Archive has no runtime access and is not a serving namespace. Restoring requires validated epoch bootstrap and stale-owner fencing, not copying metadata into a live fleet. Versioning retains history; delete markers are not replicated and no expiration is configured. Replication metrics are enabled but RTC is not; asynchronous CRR has no bounded RPO and does not backfill preexisting objects. Validate replication status and lag before any recovery claim.",
+      "ReplicationMonitoring": "OperationsFailedReplication alarm is source-region scoped; BytesPendingReplication alarm is destination-region scoped and requires ArchiveSourceBucketName identifying the remote source. Both use exact SourceBucket, DestinationBucket, RuleId dimensions in AWS/S3. Positive backlog is a warning only, not data-loss evidence or an RPO bound. Missing metrics preserve state per AWS guidance; metrics are best effort and an OK alarm is not recovery validation. RTC remains disabled. No alarm notification targets configured."
+    }
+  },
+  "Parameters": {
+    "ImageId": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+    },
+    "CloudFrontPrefixListId": {
+      "Type": "String",
+      "AllowedPattern": "pl-[0-9a-f]+",
+      "Description": "Regional com.amazonaws.global.cloudfront.origin-facing managed prefix list ID"
+    },
+    "OriginSecret": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 32,
+      "MaxLength": 128,
+      "AllowedPattern": "[A-Za-z0-9_-]+",
+      "Description": "Locally generated origin header; never put in tracked config"
+    },
+    "FleetPrefix": {
+      "Type": "String",
+      "Default": "fleet",
+      "AllowedPattern": "[a-z0-9][a-z0-9-]{0,62}",
+      "Description": "Stable isolated fleet recovery history prefix; do not change to recover existing cells"
+    },
+    "ReplicationDestinationArn": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^arn:[a-z0-9-]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+      "Description": "Remote ArchiveBucketArn ONLY, never an active fleet bucket; empty disables replication. Same-account destination must already exist."
+    },
+    "ReplicationSourceBucketName": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+      "Description": "Existing local BucketName output, supplied on second-phase update to avoid IAM/bucket dependency cycle. Must match this stack FleetBucket exactly."
+    },
+    "ArchiveSourceBucketName": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+      "Description": "Remote source fleet bucket replicating into this local ArchiveBucket. Enables destination-region backlog alarm only; must match remote source exactly."
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.74.0.0/16",
+        "EnableDnsHostnames": true,
+        "EnableDnsSupport": true
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {}
+    },
+    "GatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "RouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        }
+      }
+    },
+    "InternetRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        }
+      },
+      "DependsOn": "GatewayAttachment"
+    },
+    "Subnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "CidrBlock": "10.74.0.0/24",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": true
+      }
+    },
+    "Subnet1Route": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "Subnet1"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTable"
+        }
+      }
+    },
+    "Subnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "CidrBlock": "10.74.1.0/24",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": true
+      }
+    },
+    "Subnet2Route": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "Subnet2"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTable"
+        }
+      }
+    },
+    "AlbSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Only CloudFront origin-facing traffic",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "SourcePrefixListId": {
+              "Ref": "CloudFrontPrefixListId"
+            }
+          }
+        ]
+      }
+    },
+    "NodeSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Worker from ALB; private fleet peers only; no SSH",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "SourceSecurityGroupId": {
+              "Ref": "AlbSecurityGroup"
+            }
+          }
+        ]
+      }
+    },
+    "FleetPeerIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": {
+          "Ref": "NodeSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": 8081,
+        "ToPort": 8081,
+        "SourceSecurityGroupId": {
+          "Ref": "NodeSecurityGroup"
+        }
+      }
+    },
+    "FleetBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "ReplicationConfiguration": {
+          "Fn::If": [
+            "ReplicationEnabled",
+            {
+              "Role": {
+                "Fn::GetAtt": [
+                  "ReplicationRole",
+                  "Arn"
+                ]
+              },
+              "Rules": [
+                {
+                  "Id": "FleetRecoveryArchive",
+                  "Status": "Enabled",
+                  "Priority": 1,
+                  "Filter": {
+                    "Prefix": {
+                      "Fn::Sub": "${FleetPrefix}/"
+                    }
+                  },
+                  "DeleteMarkerReplication": {
+                    "Status": "Disabled"
+                  },
+                  "Destination": {
+                    "Bucket": {
+                      "Ref": "ReplicationDestinationArn"
+                    },
+                    "StorageClass": "STANDARD",
+                    "Metrics": {
+                      "Status": "Enabled"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "BucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "FleetBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "FleetBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${FleetBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "NodeRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "FleetStorage",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "FleetBucket",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringLike": {
+                      "s3:prefix": [
+                        {
+                          "Fn::Sub": "${FleetPrefix}/*"
+                        },
+                        {
+                          "Ref": "FleetPrefix"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "FleetBucket",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject",
+                    "s3:AbortMultipartUpload",
+                    "s3:ListMultipartUploadParts"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${FleetBucket.Arn}/${FleetPrefix}/*"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "NodeLogs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "NodeLogGroup",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "DenyRecoveryArchive",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Deny",
+                  "Action": "s3:*",
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "ArchiveBucket",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::Sub": "${ArchiveBucket.Arn}/*"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "NodeProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "NodeRole"
+          }
+        ]
+      }
+    },
+    "NodeLaunchTemplate": {
+      "Type": "AWS::EC2::LaunchTemplate",
+      "Properties": {
+        "LaunchTemplateData": {
+          "ImageId": {
+            "Ref": "ImageId"
+          },
+          "InstanceType": "t4g.medium",
+          "IamInstanceProfile": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "NodeProfile",
+                "Arn"
+              ]
+            }
+          },
+          "MetadataOptions": {
+            "HttpTokens": "required",
+            "HttpPutResponseHopLimit": 1,
+            "HttpEndpoint": "enabled"
+          },
+          "NetworkInterfaces": [
+            {
+              "DeviceIndex": 0,
+              "AssociatePublicIpAddress": true,
+              "Groups": [
+                {
+                  "Ref": "NodeSecurityGroup"
+                }
+              ]
+            }
+          ],
+          "BlockDeviceMappings": [
+            {
+              "DeviceName": "/dev/xvda",
+              "Ebs": {
+                "VolumeSize": 50,
+                "VolumeType": "gp3",
+                "Encrypted": true,
+                "DeleteOnTermination": true
+              }
+            }
+          ],
+          "UserData": {
+            "Fn::Base64": {
+              "Fn::Sub": "#!/bin/bash\nset -euo pipefail\n# No application secrets, npm, or source builds on fleet nodes.\ndnf install -y gzip amazon-cloudwatch-agent logrotate\nuseradd --system --home-dir /var/lib/celld --shell /sbin/nologin celld\ntouch /var/log/celld.log\nchmod 0640 /var/log/celld.log\ninstall -d -o celld -g celld -m 0750 /var/lib/celld /var/lib/celld/assets\ncurl --fail --location --retry 5 https://github.com/denoland/celld/releases/download/v0.6.2/celld-aarch64-unknown-linux-gnu.gz -o /tmp/celld.gz\necho '4eca87c6797590000a344c1b768364e9696e8817f5fbc16193f459d2edac7cd0  /tmp/celld.gz' | sha256sum --check -\ngzip -dc /tmp/celld.gz > /usr/local/bin/celld\nchmod 0755 /usr/local/bin/celld\n/usr/local/bin/celld --version\nrm /tmp/celld.gz\nTOKEN=$(curl --fail --silent --show-error --retry 5 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' http://169.254.169.254/latest/api/token)\nPRIVATE_IP=$(curl --fail --silent --show-error --retry 5 -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/local-ipv4)\ncat > /etc/celld.env <<EOF\nAWS_REGION=${AWS::Region}\nCELLD_BUCKET=s3://${FleetBucket}/${FleetPrefix}\nCELLD_DURABILITY=fleet\nCELLD_WATCH=/var/lib/celld\nCELLD_ASSET_CACHE_DIR=/var/lib/celld/assets\nCELLD_ADDR=0.0.0.0:8080\nCELLD_INTERNAL_ADDR=$PRIVATE_IP:8081\nCELLD_ADVERTISE=$PRIVATE_IP:8081\nEOF\nchmod 0644 /etc/celld.env\ncat > /etc/systemd/system/celld.service <<'EOF'\n[Unit]\nDescription=celld v0.6.2 regional fleet node\nWants=network-online.target\nAfter=network-online.target\n[Service]\nUser=celld\nGroup=celld\nEnvironmentFile=/etc/celld.env\nWorkingDirectory=/var/lib/celld\nExecStart=/usr/local/bin/celld --trust-forwarded-headers\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths=/var/lib/celld\nStandardOutput=append:/var/log/celld.log\nStandardError=append:/var/log/celld.log\n[Install]\nWantedBy=multi-user.target\nEOF\nmkdir -p /var/log/journal\nsystemctl restart systemd-journald\nsystemctl daemon-reload\nsystemctl enable --now celld\ncat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'\n{\"agent\":{\"run_as_user\":\"root\"},\"logs\":{\"logs_collected\":{\"files\":{\"collect_list\":[{\"file_path\":\"/var/log/celld.log\",\"log_group_name\":\"${NodeLogGroup}\",\"log_stream_name\":\"{instance_id}\"}]}}}}\nEOF\n/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s\ncat > /etc/logrotate.d/celld <<'EOF'\n/var/log/celld.log {\n    daily\n    maxsize 100M\n    rotate 3\n    missingok\n    notifempty\n    copytruncate\n    compress\n    delaycompress\n}\nEOF\n"
+            }
+          }
+        }
+      }
+    },
+    "Alb": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Scheme": "internet-facing",
+        "Type": "application",
+        "Subnets": [
+          {
+            "Ref": "Subnet1"
+          },
+          {
+            "Ref": "Subnet2"
+          }
+        ],
+        "SecurityGroups": [
+          {
+            "Ref": "AlbSecurityGroup"
+          }
+        ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "routing.http.drop_invalid_header_fields.enabled",
+            "Value": "true"
+          },
+          {
+            "Key": "idle_timeout.timeout_seconds",
+            "Value": "120"
+          }
+        ]
+      },
+      "DependsOn": [
+        "InternetRoute",
+        "Subnet1Route",
+        "Subnet2Route"
+      ]
+    },
+    "TargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Port": 8080,
+        "Protocol": "HTTP",
+        "TargetType": "instance",
+        "HealthCheckPath": "/.well-known/celld/health",
+        "HealthCheckIntervalSeconds": 15,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 3,
+        "Matcher": {
+          "HttpCode": "200"
+        },
+        "TargetGroupAttributes": [
+          {
+            "Key": "deregistration_delay.timeout_seconds",
+            "Value": "30"
+          }
+        ]
+      }
+    },
+    "Listener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": {
+          "Ref": "Alb"
+        },
+        "Port": 80,
+        "Protocol": "HTTP",
+        "DefaultActions": [
+          {
+            "Type": "fixed-response",
+            "FixedResponseConfig": {
+              "StatusCode": "403",
+              "ContentType": "text/plain",
+              "MessageBody": "Forbidden"
+            }
+          }
+        ]
+      }
+    },
+    "OriginRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "ListenerArn": {
+          "Ref": "Listener"
+        },
+        "Priority": 1,
+        "Conditions": [
+          {
+            "Field": "http-header",
+            "HttpHeaderConfig": {
+              "HttpHeaderName": "x-celld-origin-secret",
+              "Values": [
+                {
+                  "Ref": "OriginSecret"
+                }
+              ]
+            }
+          }
+        ],
+        "Actions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "TargetGroup"
+            }
+          }
+        ]
+      }
+    },
+    "Fleet": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "MinSize": "2",
+        "MaxSize": "3",
+        "DesiredCapacity": "2",
+        "VPCZoneIdentifier": [
+          {
+            "Ref": "Subnet1"
+          },
+          {
+            "Ref": "Subnet2"
+          }
+        ],
+        "LaunchTemplate": {
+          "LaunchTemplateId": {
+            "Ref": "NodeLaunchTemplate"
+          },
+          "Version": {
+            "Fn::GetAtt": [
+              "NodeLaunchTemplate",
+              "LatestVersionNumber"
+            ]
+          }
+        },
+        "TargetGroupARNs": [
+          {
+            "Ref": "TargetGroup"
+          }
+        ],
+        "HealthCheckType": "EC2",
+        "HealthCheckGracePeriod": 600,
+        "DefaultInstanceWarmup": 180,
+        "MetricsCollection": [
+          {
+            "Granularity": "1Minute",
+            "Metrics": [
+              "GroupInServiceInstances"
+            ]
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-celld"
+            },
+            "PropagateAtLaunch": true
+          }
+        ]
+      },
+      "DependsOn": [
+        "InternetRoute",
+        "Subnet1Route",
+        "Subnet2Route",
+        "OriginRule",
+        "BucketPolicy"
+      ],
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": 1,
+          "MinInstancesInService": 2,
+          "PauseTime": "PT3M"
+        }
+      }
+    },
+    "HealthyNodesAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Inspect in CloudWatch; no notification target is configured",
+        "Namespace": "AWS/ApplicationELB",
+        "MetricName": "HealthyHostCount",
+        "Dimensions": [
+          {
+            "Name": "LoadBalancer",
+            "Value": {
+              "Fn::GetAtt": [
+                "Alb",
+                "LoadBalancerFullName"
+              ]
+            }
+          },
+          {
+            "Name": "TargetGroup",
+            "Value": {
+              "Fn::GetAtt": [
+                "TargetGroup",
+                "TargetGroupFullName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Minimum",
+        "Period": 60,
+        "EvaluationPeriods": 3,
+        "Threshold": 2,
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": "breaching"
+      }
+    },
+    "FleetCapacityAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Inspect in CloudWatch; no notification target is configured",
+        "Namespace": "AWS/AutoScaling",
+        "MetricName": "GroupInServiceInstances",
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": {
+              "Ref": "Fleet"
+            }
+          }
+        ],
+        "Statistic": "Minimum",
+        "Period": 60,
+        "EvaluationPeriods": 3,
+        "Threshold": 2,
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": "breaching"
+      }
+    },
+    "HighCpuAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Inspect in CloudWatch; no notification target is configured",
+        "Namespace": "AWS/EC2",
+        "MetricName": "CPUUtilization",
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": {
+              "Ref": "Fleet"
+            }
+          }
+        ],
+        "Statistic": "Average",
+        "Period": 300,
+        "EvaluationPeriods": 3,
+        "Threshold": 85,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "breaching"
+      }
+    },
+    "NodeLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "RetentionInDays": 14
+      }
+    },
+    "ArchiveBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ArchiveBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ArchiveBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ArchiveBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${ArchiveBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ReplicationRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "ReplicationEnabled",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "s3.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ArchiveReplication",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetReplicationConfiguration",
+                    "s3:ListBucket"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${ReplicationSourceBucketName}"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObjectVersionForReplication",
+                    "s3:GetObjectVersionAcl",
+                    "s3:GetObjectVersionTagging"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${ReplicationSourceBucketName}/${FleetPrefix}/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ReplicateObject",
+                    "s3:ReplicateTags"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${ReplicationDestinationArn}/${FleetPrefix}/*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ReplicationFailuresAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "ReplicationEnabled",
+      "Properties": {
+        "AlarmDescription": "Source-region replication failure warning; inspect individual object status. No notification target configured.",
+        "Namespace": "AWS/S3",
+        "MetricName": "OperationsFailedReplication",
+        "Dimensions": [
+          {
+            "Name": "SourceBucket",
+            "Value": {
+              "Ref": "ReplicationSourceBucketName"
+            }
+          },
+          {
+            "Name": "DestinationBucket",
+            "Value": {
+              "Fn::Select": [
+                5,
+                {
+                  "Fn::Split": [
+                    ":",
+                    {
+                      "Ref": "ReplicationDestinationArn"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "Name": "RuleId",
+            "Value": "FleetRecoveryArchive"
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "ignore"
+      }
+    },
+    "ArchiveBacklogAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "ArchiveMonitoringEnabled",
+      "Properties": {
+        "AlarmDescription": "Destination-region backlog warning, not proof of data loss or a bounded recovery point. No notification target configured.",
+        "Namespace": "AWS/S3",
+        "MetricName": "BytesPendingReplication",
+        "Dimensions": [
+          {
+            "Name": "SourceBucket",
+            "Value": {
+              "Ref": "ArchiveSourceBucketName"
+            }
+          },
+          {
+            "Name": "DestinationBucket",
+            "Value": {
+              "Ref": "ArchiveBucket"
+            }
+          },
+          {
+            "Name": "RuleId",
+            "Value": "FleetRecoveryArchive"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "ignore"
+      }
+    }
+  },
+  "Outputs": {
+    "BucketName": {
+      "Value": {
+        "Ref": "FleetBucket"
+      }
+    },
+    "AlbDnsName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Alb",
+          "DNSName"
+        ]
+      }
+    },
+    "AutoScalingGroupName": {
+      "Value": {
+        "Ref": "Fleet"
+      }
+    },
+    "NodeRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "NodeRole",
+          "Arn"
+        ]
+      }
+    },
+    "TargetGroupArn": {
+      "Value": {
+        "Ref": "TargetGroup"
+      }
+    },
+    "ArchiveBucketName": {
+      "Value": {
+        "Ref": "ArchiveBucket"
+      }
+    },
+    "ArchiveBucketArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ArchiveBucket",
+          "Arn"
+        ]
+      }
+    }
+  },
+  "Conditions": {
+    "ReplicationEnabled": {
+      "Fn::And": [
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "ReplicationDestinationArn"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "ReplicationSourceBucketName"
+                },
+                ""
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "ArchiveMonitoringEnabled": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "ArchiveSourceBucketName"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Rules": {
+    "ReplicationParametersTogether": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Or": [
+              {
+                "Fn::And": [
+                  {
+                    "Fn::Equals": [
+                      {
+                        "Ref": "ReplicationDestinationArn"
+                      },
+                      ""
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      {
+                        "Ref": "ReplicationSourceBucketName"
+                      },
+                      ""
+                    ]
+                  }
+                ]
+              },
+              {
+                "Fn::And": [
+                  {
+                    "Fn::Not": [
+                      {
+                        "Fn::Equals": [
+                          {
+                            "Ref": "ReplicationDestinationArn"
+                          },
+                          ""
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "Fn::Not": [
+                      {
+                        "Fn::Equals": [
+                          {
+                            "Ref": "ReplicationSourceBucketName"
+                          },
+                          ""
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Supply both replication destination ARN and existing source bucket name, or leave both empty."
+        }
+      ]
+    }
+  }
+}
