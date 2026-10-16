@@ -395,8 +395,12 @@ inferred from this unit suite. No new framework dependencies were added.
 The user authorized publication first and teardown afterward. The initial report
 and implementation were committed and pushed as `9401fe4` on `feat/celld-test`;
 the remote commit hash was verified before any destructive AWS operation.
-GitHub Actions validation for that commit passed, including the baseline container
-build/smoke checks. Private deployment evidence and credentials were not staged.
+The push-event GitHub Actions validation for that commit passed, including the
+baseline container build/smoke checks. A separate pull-request run later reached
+the container build but failed on an upstream public ECR **HTTP 429** image-pull
+rate limit; that run is not represented as passing. Local runtime/build/test
+evidence is independent of that registry failure. Private deployment evidence and
+credentials were not staged.
 
 **Active experiment infrastructure has now been removed.** A final identity-bound
 read-only audit passed 32 checks against the recorded resources and their terminal

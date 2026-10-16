@@ -527,7 +527,11 @@ AWS_PROFILE=<sandbox-profile> node experiments/celld/scripts/cleanup.ts --plan
 ```
 
 The live read-only plan was validated against six identity-bound stack records, including the writer role.
-No teardown has been performed. Resources remain running and billable.
+After publication, the user authorized full teardown. All six stacks and their
+separately retained active resources have now been removed and verified; see
+[the final disposition and SYSTEM-backup exception](REPORT.md#resource-disposition-and-publication).
+The commands below describe the tooling for a future deployment, not resources
+that are still running.
 Destructive execution requires separate explicit user authorization, plus
 `--execute --confirm-delete=<experiment-prefix> --ack-retained-costs`.
 It removes owned ingress/compute/stack records in dependency order, **not** all
