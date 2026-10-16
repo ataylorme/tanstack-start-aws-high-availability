@@ -17,7 +17,8 @@ The user permits supported native extensions but **does not permit a celld fork*
 - **Not a production recommendation:** full failure/cost/performance requirements
   remain unproven. At the pre-publication validation snapshot, resources were running and billable.
   See [REPORT resource disposition](REPORT.md#resource-disposition-and-publication)
-  for the subsequent publication/authorized teardown outcome.
+  for the subsequent publication and verified active-infrastructure teardown,
+  including the AWS-enforced SYSTEM-backup retention exception.
 
 ## Current completion blocker
 

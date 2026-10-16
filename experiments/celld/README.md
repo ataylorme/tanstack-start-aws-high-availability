@@ -12,7 +12,9 @@ is blocked on supported native authorization/recovery facilities, not complete;
 see [the current blocker and resume conditions](ASSESSMENT.md#current-completion-blocker).
 
 See [REPORT.md](REPORT.md) for the consolidated findings, evidence limits,
-benchmark/cost summaries and teardown disposition.
+benchmark/cost summaries and verified teardown disposition. The experiment
+infrastructure has been removed; only AWS-enforced, no-additional-cost deleted-table
+SYSTEM backups remain until their recorded expiry. Reprovision before AWS probes.
 
 ## Initial local compatibility probe
 

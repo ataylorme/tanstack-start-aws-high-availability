@@ -390,32 +390,72 @@ inferred from this unit suite. No new framework dependencies were added.
 
 ## Resource disposition and publication
 
-**Publication snapshot:** test infrastructure is still deployed at the time of
-this initial report commit. The user has authorized teardown **after** the report
-and implementation are committed and pushed. This section will be updated with
-the verified outcome; planned deletion is not reported as completed deletion.
+### Ordered publication and authorized teardown
 
-The built-in cleanup plan has six identity-bound CloudFormation stack records.
-Its normal destructive mode intentionally retains versioned buckets, the MRSC
-table and Lambda@Edge artifacts. Running it alone is **not full teardown** or
-proof that costs have stopped.
+The user authorized publication first and teardown afterward. The initial report
+and implementation were committed and pushed as `9401fe4` on `feat/celld-test`;
+the remote commit hash was verified before any destructive AWS operation.
+GitHub Actions validation for that commit passed, including the baseline container
+build/smoke checks. Private deployment evidence and credentials were not staged.
 
-The authorized full cleanup must:
+**Active experiment infrastructure has now been removed.** A final identity-bound
+read-only audit passed 32 checks against the recorded resources and their terminal
+API states. This is infrastructure teardown, not the missing regional failover
+experiment and not a claim that all AWS-retained historical data is erased.
 
-1. Verify the caller account and exact recorded stack/resource identities.
-2. Remove CloudFront ingress and experiment compute/network/control stacks,
-   preserving a private inventory of retained resources before deleting records.
-3. Purge only the test's proven-owned S3 versions/delete markers and multipart
-   uploads, then delete those buckets; do not infer ownership from a broad prefix.
-4. Remove deletion protection and delete the test MRSC replicas/witness/table
-   through supported APIs, checking terminal absence.
-5. Delete retained edge versions/functions/roles after replicated edge use has
-   released them. AWS can delay this after CloudFront disassociation; report a
-   real pending dependency rather than claiming instantaneous completion.
-6. Check for test-owned retained/replaced resources, surviving instances/volumes,
-   ENIs/addresses, ALBs, logs/alarms and roles. Unrelated baseline resources must
-   remain untouched. Preserve private evidence of every terminal outcome.
+| Resource group | Verified outcome |
+|---|---|
+| Six experiment CloudFormation stacks | All `DELETE_COMPLETE`; current stack resources are deleted or explicitly retained for separate cleanup |
+| CloudFront distribution and custom origin-request policy | Exact resources absent |
+| Eastern and western fleets | ASGs absent; no nonterminated instances for the owned groups |
+| Regional networks | VPCs and their ENIs absent; stack-managed ALB/network resources deleted |
+| Captured fleet disks and ALB Elastic IPv4 allocations | Exact volume/allocation identities absent |
+| Four retained versioned S3 buckets | Versions and delete markers purged, multipart uploads checked/aborted, buckets deleted and authorized HeadBucket checks return 404 |
+| DynamoDB directory | Both former replica tables absent; witness removed through the paired replica/witness transition before deleting the final table |
+| Lambda@Edge | AWS released the replicas; original function/all versions absent, retained execution role absent, observed exact-function log groups removed across enabled regions |
+| Retained node logs and experiment roles | Exact retained log groups and recorded roles absent |
+| On-demand backups / AWS Backup | The exact-table inventory returned only the two SYSTEM snapshots described below; no matching AWS Backup protected-resource entries were returned |
 
-Local ignored logs, archives and development fixtures are not AWS infrastructure
-and are not included in the public commit. Billing can lag deletion; resource
-absence is not a reconciled final invoice or a guarantee of an immediate zero bill.
+The standard cleanup command deliberately retains storage, the directory and edge
+artifacts, so its successful stack deletion was **not** treated as full teardown.
+Those resources were removed separately using captured physical identities and
+fresh API checks, never a broad account-wide prefix deletion. Historical retained
+edge versions were included by removing the original function after AWS released
+replication. Shared service-linked roles and unrelated baseline resources were
+not targeted.
+
+The fleets were scaled to zero during CloudFront deletion to stop writers. All
+remaining owned bucket replication configurations were removed. The S3 purge
+included noncurrent versions: ordinary recursive object removal would not have
+emptied these buckets. Closed-response delete batches remained unknown, their
+requests were preserved privately, and fresh listings selected the still-present
+immutable versions for subsequent idempotent deletion. Only final bucket absence
+was used as completion evidence.
+
+Deletion protection was disabled only on the verified directory replicas. The
+other replica and witness were removed together through the supported update,
+then the surviving table was deleted. Lambda@Edge deletion initially refused
+because AWS still held replicated versions; cleanup waited for service release
+rather than attempting unsupported manual replica deletion.
+
+### AWS-enforced residual data retention
+
+Deleting the PITR-enabled directory tables created **two AWS-managed SYSTEM
+backups**, one in each former replica region. Both were matched to their captured
+immutable table IDs. Explicit deletion attempts returned AWS's refusal that users
+cannot delete these SYSTEM backups. The recorded expiration is **November 20,
+2026 (UTC)**. Their identifiers and exact metadata remain private.
+
+AWS documents that a deleted-table PITR snapshot is retained for up to 35 days
+**at no additional cost**. These are not running table replicas, a witness,
+user-created on-demand backups or an active experiment fleet. They are a residual
+copy of test data until AWS's expiry—not proof of complete data erasure.
+[Deleted-table PITR behavior](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/PointInTimeRecovery_Howitworks.html),
+[DynamoDB pricing](https://aws.amazon.com/dynamodb/pricing/).
+
+The final public report contains no resource IDs, endpoints, account identity or
+raw deletion evidence. Local ignored logs, archives, credentials and development
+fixtures were not published or deleted as part of AWS teardown. Billing can lag
+resource removal: this audit is not a reconciled final invoice, a claim that
+historical charges disappeared, or a guarantee of zero charges elsewhere in the
+account.
